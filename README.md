@@ -34,14 +34,17 @@ streamlit run app.py
 
 ## Streamlit Cloud 배포
 
-1. GitHub에 본 repo 푸시
-2. https://share.streamlit.io 에서 "New app" → 본 repo + `app.py` 지정
-3. 한글 폰트는 `assets/fonts/NanumGothic.ttf` 번들 + `packages.txt`(`fonts-nanum`) 백업으로 보장
-4. 배포 URL 확정 후 [lib/qr.py](lib/qr.py)의 `BASE_URL`을 새 도메인으로 교체
-   ```python
-   BASE_URL = "https://yidsdc-pyrosafe.streamlit.app"  # 예시
+1. GitHub에 본 repo 푸시 — **완료**
+2. https://share.streamlit.io 에서 **"New app"** 클릭
+   - Repository: `sojunghan2000-droid/YonginAIDC`
+   - Branch: `main`
+   - Main file: `app.py`
+3. Deploy 클릭 → 약 2–3분 빌드. 한글 폰트는 번들된 NanumGothic + `packages.txt` 백업 사용
+4. URL 발급되면 **앱 Settings → Secrets**에 한 줄 추가
+   ```toml
+   BASE_URL = "https://<your-app>.streamlit.app"
    ```
-5. push 시 자동 재배포 — QR이 자동으로 새 도메인으로 갱신됨
+   → 코드 변경/push 없이 즉시 모든 QR이 새 URL로 갱신됨
 
 ## 데이터
 

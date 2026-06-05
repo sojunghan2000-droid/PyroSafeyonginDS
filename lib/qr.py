@@ -2,13 +2,20 @@
 
 페이로드: 딥링크 URL `{BASE_URL}/inspect?eq={equipment_id}`
 스캐너가 즉시 점검 폼을 열도록 설계.
+
+BASE_URL 결정 우선순위:
+1. Streamlit secrets[`BASE_URL`] — 배포 환경 (Streamlit Cloud)
+2. 환경변수 PYROSAFE_BASE_URL — 셀프 호스팅
+3. 기본값 (placeholder) — 로컬 개발
 """
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from typing import TYPE_CHECKING
 
 import qrcode
+import streamlit as st
 from qrcode.constants import ERROR_CORRECT_H
 
 if TYPE_CHECKING:
@@ -17,12 +24,31 @@ if TYPE_CHECKING:
     from lib.data import Equipment
 
 
-BASE_URL = "https://pyrosafe.app"
+def _resolve_base_url() -> str:
+    """우선순위: secrets > env > placeholder."""
+    # 1) Streamlit secrets (배포 환경)
+    try:
+        val = st.secrets.get("BASE_URL")
+        if val:
+            return val.rstrip("/")
+    except Exception:
+        pass
+    # 2) 환경변수 (셀프 호스팅)
+    val = os.environ.get("PYROSAFE_BASE_URL")
+    if val:
+        return val.rstrip("/")
+    # 3) 기본값 (배포 도메인 없는 로컬 개발)
+    return "https://pyrosafe.app"
+
+
+def get_base_url() -> str:
+    """런타임에 매번 최신 BASE_URL 반환 (secrets 변경 즉시 반영)."""
+    return _resolve_base_url()
 
 
 def payload_for(equipment: "Equipment") -> str:
     """장비 → QR에 인코딩될 URL."""
-    return f"{BASE_URL}/inspect?eq={equipment.equipment_id}"
+    return f"{get_base_url()}/inspect?eq={equipment.equipment_id}"
 
 
 def make_qr(
