@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual env
+venv/
+.venv/
+env/
+ENV/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+
+# Local data
+data/local/
+*.db
+*.sqlite
+
+# PDF outputs (생성물)
+output/
+!assets/templates/*.pdf
+
+# Screenshots / reference assets (개발 검증용)
+screenshots/
+.playwright-mcp/
+Biz Process/
+WebScreendraft/
+project source/
+
+# Secrets
+.env
+*.key
+
+# .claude 로컬 설정
+.claude/launch.json
