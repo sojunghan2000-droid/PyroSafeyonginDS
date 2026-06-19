@@ -325,27 +325,14 @@ def _qr_dialog(equipment_id: str) -> None:
                     )
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
-    dl_col, go_col = st.columns(2)
-    with dl_col:
-        st.download_button(
-            "PNG 다운로드",
-            data=qr_png_bytes(eq, box_size=12),
-            file_name=f"QR_{eq.equipment_id}_{eq.location_id}.png",
-            mime="image/png",
-            use_container_width=True,
-            key=f"qr_dlg_dl_{eq.equipment_id}",
-        )
-    with go_col:
-        if st.button(
-            "이 장비 점검 입력 →",
-            key=f"qr_dlg_goto_{eq.equipment_id}",
-            type="primary",
-            use_container_width=True,
-        ):
-            st.session_state["inspect_target"] = eq.equipment_id
-            st.session_state["page"] = "deficiencies"
-            st.session_state["_open_inspect_dialog"] = True
-            st.rerun()
+    st.download_button(
+        "PNG 다운로드",
+        data=qr_png_bytes(eq, box_size=12),
+        file_name=f"QR_{eq.equipment_id}_{eq.location_id}.png",
+        mime="image/png",
+        use_container_width=True,
+        key=f"qr_dlg_dl_{eq.equipment_id}",
+    )
 
 
 def render() -> None:
