@@ -139,12 +139,17 @@ def _floor_image_uri(floor: str) -> str | None:
     return f"data:image/png;base64,{b64}"
 
 
-def _make_floor_plan_figure(floor: str) -> go.Figure | None:
-    """도면 PNG를 배경으로 한 plotly 차트 (줌·팬·핀치줌 활성)."""
+_HEALTH_COLOR = {"PASS": "#10B981", "FAIL": "#DC2626", "DUE": "#3B82F6"}
+_EMPTY_SPOT_COLOR = "#CBD5E1"
+
+
+def _make_floor_plan_figure(floor: str, items=None, spots=None) -> go.Figure | None:
+    """도면 PNG 백그라운드 + spot 마커 + 장비 상태 색.
+    items: 이 층의 Equipment 리스트
+    spots: 이 층의 Spot 리스트 (None이면 마커 미표시 — 하위 호환)"""
     uri = _floor_image_uri(floor)
     if uri is None:
         return None
-    # PNG는 전부 2978x2105 — 좌표계를 그 픽셀 기준으로 잡는다.
     W, H = 2978, 2105
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -152,6 +157,61 @@ def _make_floor_plan_figure(floor: str) -> go.Figure | None:
         x=0, y=H, sizex=W, sizey=H,
         sizing="stretch", layer="below", opacity=1.0,
     ))
+
+    # spot 위에 장비 매핑 — spot_id → list[Equipment]
+    if spots:
+        by_spot: dict[str, list] = {}
+        for e in (items or []):
+            if e.spot_id:
+                by_spot.setdefault(e.spot_id, []).append(e)
+
+        empty_x, empty_y, empty_text = [], [], []
+        marker_x, marker_y, marker_color, marker_text, marker_size = [], [], [], [], []
+        for s in spots:
+            xpix = s.x_pct / 100 * W
+            ypix = H - s.y_pct / 100 * H
+            eqs = by_spot.get(s.spot_id, [])
+            if not eqs:
+                empty_x.append(xpix)
+                empty_y.append(ypix)
+                empty_text.append(f"{s.room_name}<br>{s.spot_id}<br><i>빈 위치</i>")
+            else:
+                # 우선순위: FAIL > DUE > PASS
+                color = _EMPTY_SPOT_COLOR
+                for prio in ("FAIL", "DUE", "PASS"):
+                    if any(e.health_status == prio for e in eqs):
+                        color = _HEALTH_COLOR[prio]
+                        break
+                marker_x.append(xpix)
+                marker_y.append(ypix)
+                marker_color.append(color)
+                hover = (
+                    f"<b>{s.room_name}</b> ({s.spot_id})<br>"
+                    + "<br>".join(
+                        f"· {e.equipment_id} · {e.equipment_name} · {e.health_status}"
+                        for e in eqs
+                    )
+                )
+                marker_text.append(hover)
+                marker_size.append(18 + min(len(eqs) - 1, 4) * 3)  # 장비 많을수록 크게
+
+        if empty_x:
+            fig.add_trace(go.Scatter(
+                x=empty_x, y=empty_y, mode="markers",
+                marker=dict(size=12, color=_EMPTY_SPOT_COLOR,
+                            line=dict(color="#FFFFFF", width=2)),
+                hovertext=empty_text, hoverinfo="text",
+                name="빈 위치", showlegend=False,
+            ))
+        if marker_x:
+            fig.add_trace(go.Scatter(
+                x=marker_x, y=marker_y, mode="markers",
+                marker=dict(size=marker_size, color=marker_color,
+                            line=dict(color="#FFFFFF", width=2)),
+                hovertext=marker_text, hoverinfo="text",
+                name="장비", showlegend=False,
+            ))
+
     fig.update_xaxes(visible=False, range=[0, W], constrain="domain")
     fig.update_yaxes(visible=False, range=[0, H], scaleanchor="x", scaleratio=1)
     fig.update_layout(
@@ -159,6 +219,7 @@ def _make_floor_plan_figure(floor: str) -> go.Figure | None:
         plot_bgcolor="#F8FAFC",
         height=620,
         dragmode="pan",
+        showlegend=False,
     )
     return fig
 
@@ -194,14 +255,14 @@ def _floor_detail_dialog(floor: str) -> None:
 
     st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
 
-    fig = _make_floor_plan_figure(floor)
+    spots = data.load_spots(floor)
+    fig = _make_floor_plan_figure(floor, items=stats["items"], spots=spots)
     if fig is None:
         st.warning(
             f"`{floor}` 도면 이미지가 없습니다. "
             f"`scripts/convert_floor_pdfs.py`를 실행해 도면을 생성해 주세요."
         )
     else:
-        # scrollZoom=True → 휠/핀치 줌 활성. modeBarButtonsToAdd로 그리기 도구는 숨김.
         st.plotly_chart(
             fig, use_container_width=True,
             config={
@@ -216,10 +277,16 @@ def _floor_detail_dialog(floor: str) -> None:
         )
         st.markdown(
             "<div style='color:#64748B; font-size:0.78rem; margin-top:-0.5rem;'>"
-            "마우스 휠 / 모바일 핀치 확대 · 드래그로 이동 · 홈 아이콘으로 초기화 · "
-            "장비 마커 표시는 v1.1에서 도입(위치 spot 객체 도입 후)</div>",
+            "휠/핀치 줌 · 드래그 팬 · 홈 아이콘 초기화 · "
+            "● 빨강 FAIL · ● 파랑 DUE · ● 초록 PASS · ● 회색 빈 위치"
+            "</div>",
             unsafe_allow_html=True,
         )
+        if not spots:
+            st.info(
+                f"`{floor}` 층에 정의된 위치(spot)가 없습니다. 관리자 메뉴 → "
+                f"위치 마스터에서 spot을 추가하면 도면 위 마커가 표시됩니다."
+            )
 
     st.markdown("<div style='height:0.8rem;'></div>", unsafe_allow_html=True)
     st.markdown(

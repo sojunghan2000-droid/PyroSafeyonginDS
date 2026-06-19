@@ -245,17 +245,17 @@ def malfunction_dialog() -> None:
 
 @st.dialog("신규 장비 등록", width="large")
 def equipment_dialog() -> None:
-    """시설 마스터에 신규 장비를 등록. 등록 후 QR 모달은 자동 노출하지 않고
-    시설 관리 테이블에 즉시 반영 (사용자가 테이블에서 QR 버튼 클릭)."""
+    """시설 마스터에 신규 장비를 등록. 위치는 spot 객체에서 선택 (관리자가
+    위치 마스터에서 정의). 등록 후 QR 모달은 자동 노출하지 않는다."""
     st.markdown(
         "<div style='color:#64748B; font-size:0.88rem; margin-bottom:0.5rem;'>"
-        "새 소방시설을 시설 마스터에 등록합니다. 등록 즉시 QR이 발급되며, "
-        "테이블에서 'QR' 버튼으로 미리보기 / PNG 다운로드 가능."
+        "새 소방시설을 시설 마스터에 등록합니다. 위치는 관리자가 정의한 "
+        "spot 목록에서 선택하며, 등록 즉시 QR이 발급됩니다."
         "</div>",
         unsafe_allow_html=True,
     )
 
-    # 자동 생성 ID/시리얼 (입력 전 미리 계산)
+    # 자동 생성 ID/시리얼
     auto_eid = next_equipment_id()
     auto_serial = next_serial()
 
@@ -269,19 +269,53 @@ def equipment_dialog() -> None:
             key="eq_dlg_name",
         )
 
-    c3, c4, c5 = st.columns([1, 1, 1.4])
-    with c3:
-        floor = st.selectbox("층", options=EQ_FLOORS, key="eq_dlg_floor")
-    with c4:
-        zone = st.text_input("구역", placeholder="예: SEC4", key="eq_dlg_zone")
-    with c5:
-        serial = st.text_input(
-            "시리얼 번호 (자동 + 수정 가능)",
-            value=auto_serial,
-            key="eq_dlg_serial",
-        )
+    # ── 위치 spot 선택 (층 → spot 2단계) ──
+    all_spots = data.load_spots()
+    floors_with_spots = sorted({s.floor for s in all_spots},
+                               key=lambda f: EQ_FLOORS.index(f) if f in EQ_FLOORS else 999)
 
-    # 카테고리 변경 시 점검 유형 기본값을 새로 채움 (사용자가 명시 수정 전까지)
+    c3, c4 = st.columns([1, 2])
+    with c3:
+        if floors_with_spots:
+            floor = st.selectbox(
+                "층", options=floors_with_spots, key="eq_dlg_floor",
+            )
+        else:
+            floor = None
+            st.markdown(
+                "<div style='padding-top:1.7rem; color:#DC2626; font-size:0.85rem;'>"
+                "정의된 위치가 없습니다.</div>",
+                unsafe_allow_html=True,
+            )
+    with c4:
+        floor_spots = [s for s in all_spots if s.floor == floor] if floor else []
+        if floor_spots:
+            spot_idx = st.selectbox(
+                "위치 (spot)",
+                options=range(len(floor_spots)),
+                format_func=lambda i: (
+                    f"{floor_spots[i].room_name} "
+                    f"({floor_spots[i].spot_id})"
+                ),
+                key="eq_dlg_spot_idx",
+            )
+            sel_spot = floor_spots[spot_idx]
+        else:
+            sel_spot = None
+            st.markdown(
+                "<div style='padding-top:1.7rem; color:#94A3B8; font-size:0.85rem;'>"
+                "이 층에 정의된 위치가 없습니다. 관리자에게 위치 마스터에서 spot을 "
+                "추가해달라고 요청하세요.</div>",
+                unsafe_allow_html=True,
+            )
+
+    serial = st.text_input(
+        "시리얼 번호 (자동 + 수정 가능)",
+        value=auto_serial,
+        key="eq_dlg_serial",
+    )
+
+    # 카테고리 변경 시 점검 유형 기본값을 새로 채움
     cat_default_types = default_inspection_types_for(category)
     last_cat = st.session_state.get("eq_dlg_last_cat")
     if last_cat != category:
@@ -296,31 +330,37 @@ def equipment_dialog() -> None:
     )
 
     # 자동 생성 영역 (정보 표시용)
-    location_preview = next_location_id(floor, zone.strip()) if zone.strip() else "—"
+    if sel_spot:
+        loc_preview = f"{sel_spot.floor}-{sel_spot.spot_id.split('-')[-1]}"
+        loc_html = (
+            f"<b>위치 ID</b> · {loc_preview} &nbsp;|&nbsp; "
+            f"<b>spot</b> · {sel_spot.room_name} ({sel_spot.spot_id})<br>"
+            f"<b>도면 좌표</b> · ({sel_spot.x_pct:.1f}%, {sel_spot.y_pct:.1f}%)"
+        )
+    else:
+        loc_html = "<b>위치</b> · 위치 spot 미선택 (등록 불가)"
+
     st.markdown(
         "<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; "
         "padding:0.7rem 0.95rem; color:#475569; font-size:0.88rem; line-height:1.6;'>"
-        f"<b>장비 ID</b> · {auto_eid} &nbsp;|&nbsp; "
-        f"<b>위치 ID</b> · {location_preview}<br>"
-        f"<b>초기 상태</b> · {badge('DUE')} {badge('ASSIGNED')} (미점검 · QR 발급됨)<br>"
-        f"<b>도면 좌표</b> · 기본 (50, 50) — 추후 도면에서 편집 예정"
+        f"<b>장비 ID</b> · {auto_eid}<br>"
+        f"{loc_html}<br>"
+        f"<b>초기 상태</b> · {badge('DUE')} {badge('ASSIGNED')} (미점검 · QR 발급됨)"
         "</div>",
         unsafe_allow_html=True,
     )
 
-    if st.button("등록 + QR 발급", type="primary", use_container_width=True,
-                 key="eq_dlg_submit"):
+    if st.button(
+        "등록 + QR 발급", type="primary", use_container_width=True,
+        key="eq_dlg_submit", disabled=(sel_spot is None),
+    ):
         if not equipment_name.strip():
             st.error("장비명을 입력해 주세요.")
-            return
-        if not zone.strip():
-            st.error("구역을 입력해 주세요.")
             return
         if not serial.strip():
             st.error("시리얼 번호를 입력해 주세요.")
             return
 
-        # 시리얼 중복 검증
         existing_serials = {e.serial for e in data.load_equipment()}
         if serial.strip() in existing_serials:
             st.error(
@@ -329,20 +369,26 @@ def equipment_dialog() -> None:
             )
             return
 
+        # spot 정보로 zone/location_id/pixel 좌표 자동 채움
+        seq = sel_spot.spot_id.split("-")[-1]      # NNN
+        location_id = f"{sel_spot.floor}-{seq}"    # 예: 1F-001
+        zone_value = sel_spot.room_name            # 사용자가 정의한 방이름
+
         new_eq = Equipment(
             equipment_id=auto_eid,
-            location_id=location_preview,
+            location_id=location_id,
             category=category,  # type: ignore[arg-type]
             equipment_name=equipment_name.strip(),
             serial=serial.strip(),
             qr_status="ASSIGNED",
             last_inspection=None,
             health_status="DUE",
-            floor=floor,
-            zone=zone.strip(),
-            pixel_x=50.0,
-            pixel_y=50.0,
+            floor=sel_spot.floor,
+            zone=zone_value,
+            pixel_x=sel_spot.x_pct,
+            pixel_y=sel_spot.y_pct,
             inspection_types=list(insp_types),
+            spot_id=sel_spot.spot_id,
         )
         add_equipment(new_eq)
         st.session_state["just_submitted_equipment"] = True

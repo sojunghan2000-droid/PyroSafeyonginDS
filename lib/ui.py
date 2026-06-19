@@ -456,6 +456,11 @@ NAV_PAGES = [
     ("reports", "보고서"),
 ]
 
+# 관리자 전용 메뉴 (auth.is_admin() == True 인 사용자에게만 노출)
+NAV_PAGES_ADMIN = [
+    ("admin", "관리자 메뉴"),
+]
+
 
 def render_sidebar(active: str) -> str:
     """사이드바를 렌더하고 사용자가 선택한 페이지 key를 반환.
@@ -495,6 +500,22 @@ def render_sidebar(active: str) -> str:
             btn_type = "primary" if is_active else "secondary"
             if st.button(btn_label, key=f"nav_{key}", type=btn_type, use_container_width=True):
                 selected = key
+
+        # 관리자 전용 메뉴 — is_admin() 사용자에게만 노출
+        try:
+            from lib import auth  # 순환 참조 회피: 함수 안에서 import
+            show_admin = auth.is_admin()
+        except Exception:
+            show_admin = False
+        if show_admin:
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+            for idx, (key, label) in enumerate(NAV_PAGES_ADMIN, start=1):
+                btn_label = "A." if mini else f"A. {label}"
+                is_active = key == active
+                btn_type = "primary" if is_active else "secondary"
+                if st.button(btn_label, key=f"nav_{key}",
+                             type=btn_type, use_container_width=True):
+                    selected = key
 
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown(

@@ -9,6 +9,7 @@ import streamlit as st
 from lib import auth
 from lib.ui import apply_theme, render_sidebar, render_topbar
 from pages_app import (
+    admin_center,
     dashboard,
     equipment_inventory,
     inspection_form,
@@ -62,6 +63,7 @@ PAGE_RENDERERS = {
     "floor_map": floor_map.render,
     "field": field_mobile.render,
     "settings": settings.render,
+    "admin": admin_center.render,
 }
 
 PAGE_RENDERERS.get(active, dashboard.render)()

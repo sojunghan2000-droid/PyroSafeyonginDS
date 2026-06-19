@@ -51,10 +51,23 @@ class Equipment:
     pixel_y: float = 0.0
     # 이 장비에 적용 가능한 점검 유형 목록 (점검 일정 등록 시 자동 후보 필터에 사용)
     inspection_types: list[str] = None  # type: ignore[assignment]
+    # v1.1: 도면 위 위치 spot 객체 참조 (없으면 None — 기존 데이터)
+    spot_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.inspection_types is None:
             self.inspection_types = []
+
+
+@dataclass
+class Spot:
+    """도면 위 장비 후보 위치 (관리자가 정의). v1.1 추가."""
+    spot_id: str
+    floor: str
+    room_name: str
+    notes: str
+    x_pct: float
+    y_pct: float
 
 
 # 점검 일정 등록 시 사용하는 점검 유형 카탈로그
@@ -214,6 +227,16 @@ def _row_to_equipment(r: dict) -> Equipment:
         health_status=r["health_status"], floor=r["floor"], zone=r["zone"],
         pixel_x=r.get("pixel_x") or 0.0, pixel_y=r.get("pixel_y") or 0.0,
         inspection_types=list(r.get("inspection_types") or []),
+        spot_id=r.get("spot_id"),
+    )
+
+
+def _row_to_spot(r: dict) -> Spot:
+    return Spot(
+        spot_id=r["spot_id"], floor=r["floor"],
+        room_name=r["room_name"], notes=r.get("notes") or "",
+        x_pct=float(r.get("x_pct") or 0.0),
+        y_pct=float(r.get("y_pct") or 0.0),
     )
 
 
@@ -288,6 +311,12 @@ def _malfunction_rows() -> list[dict]:
             .order("occurred_on", desc=True).execute().data)
 
 
+@st.cache_data(ttl=_CACHE_TTL)
+def _spot_rows() -> list[dict]:
+    return (_db().table("floor_spots").select("*")
+            .order("floor").order("spot_id").execute().data)
+
+
 def load_equipment() -> list[Equipment]:
     return [_row_to_equipment(r) for r in _equipment_rows()]
 
@@ -308,6 +337,21 @@ def load_malfunctions() -> list[Malfunction]:
     return [_row_to_malfunction(r) for r in _malfunction_rows()]
 
 
+def load_spots(floor: str | None = None) -> list[Spot]:
+    """전체 spot 또는 특정 층의 spot 목록."""
+    rows = _spot_rows()
+    if floor is not None:
+        rows = [r for r in rows if r["floor"] == floor]
+    return [_row_to_spot(r) for r in rows]
+
+
+def get_spot(spot_id: str) -> Spot | None:
+    for r in _spot_rows():
+        if r["spot_id"] == spot_id:
+            return _row_to_spot(r)
+    return None
+
+
 # ---------- 쓰기 ----------
 
 def add_equipment(e: Equipment) -> None:
@@ -319,8 +363,43 @@ def add_equipment(e: Equipment) -> None:
         "health_status": e.health_status, "floor": e.floor, "zone": e.zone,
         "pixel_x": e.pixel_x, "pixel_y": e.pixel_y,
         "inspection_types": e.inspection_types or [],
+        "spot_id": e.spot_id,
     }).execute()
     _equipment_rows.clear()
+
+
+def add_spot(s: Spot) -> None:
+    _db().table("floor_spots").insert({
+        "spot_id": s.spot_id, "floor": s.floor,
+        "room_name": s.room_name, "notes": s.notes,
+        "x_pct": s.x_pct, "y_pct": s.y_pct,
+    }).execute()
+    _spot_rows.clear()
+
+
+def update_spot(s: Spot) -> None:
+    _db().table("floor_spots").update({
+        "floor": s.floor, "room_name": s.room_name,
+        "notes": s.notes, "x_pct": s.x_pct, "y_pct": s.y_pct,
+    }).eq("spot_id", s.spot_id).execute()
+    _spot_rows.clear()
+
+
+def delete_spot(spot_id: str) -> None:
+    """spot 삭제. 이 spot을 참조하던 장비는 spot_id가 NULL로 풀린다 (FK 미설정).
+    호출 전 사용 중 여부를 확인해서 사용자에게 경고할 책임은 호출부에 있다."""
+    _db().table("equipment").update({"spot_id": None}).eq("spot_id", spot_id).execute()
+    _db().table("floor_spots").delete().eq("spot_id", spot_id).execute()
+    _equipment_rows.clear()
+    _spot_rows.clear()
+
+
+def next_spot_id(floor: str) -> str:
+    """다음 spot ID (SPOT-{floor}-NNN). 같은 층 내 순번."""
+    existing = [r["spot_id"] for r in _spot_rows() if r["floor"] == floor]
+    prefix = f"SPOT-{floor}-"
+    max_n = _max_seq_in_ids(existing, prefix)
+    return f"{prefix}{max_n + 1:03d}"
 
 
 def set_equipment_inspection_types(equipment_id: str, types: list[str]) -> None:
