@@ -638,9 +638,10 @@ def restore_task(task_id: str) -> None:
 
 
 def next_round_id() -> str:
-    """다음 회차 ID. 형식: RND-YYYYMMDD-NNN (오늘 날짜 + 일내 순번)."""
+    """다음 점검 ID. 형식: INS-YYYYMMDD-NNN (오늘 날짜 + 일내 순번).
+    UI에서는 '점검 ID'로 노출. v1.5+에서 prefix RND → INS로 변경."""
     today = TODAY.strftime("%Y%m%d")
-    prefix = f"RND-{today}-"
+    prefix = f"INS-{today}-"
     existing = [r["round_id"] for r in _round_rows()
                 if r["round_id"].startswith(prefix)]
     next_n = len(existing) + 1

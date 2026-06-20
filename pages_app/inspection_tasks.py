@@ -320,7 +320,7 @@ def render() -> None:
         "gap:0.4rem; padding:0.55rem 0.4rem; "
         "color:#64748B; font-size:0.78rem; font-weight:600; "
         "border-bottom:1px solid #E2E8F0;'>"
-        "<div>회차 ID</div>"
+        "<div>점검 ID</div>"
         "<div>점검 유형</div>"
         "<div>담당자</div>"
         "<div>마감일</div>"
