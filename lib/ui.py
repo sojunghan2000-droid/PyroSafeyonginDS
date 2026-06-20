@@ -494,6 +494,17 @@ THEME_CSS = """
     hr.section-divider {
         border: none; border-top: 1px solid #E2E8F0; margin: 1.2rem 0;
     }
+
+    /* 사이드바 관리자 하위 메뉴 — 들여쓰기는 CSS padding 으로 처리하여
+       라벨에 공백을 넣지 않도록 함 (공백 4+은 markdown code block으로 오해됨). */
+    [class*="st-key-nav_admin_sub_"] button {
+        padding-left: 1.2rem !important;
+        justify-content: flex-start !important;
+        font-size: 0.85rem !important;
+    }
+    [class*="st-key-nav_admin_sub_"] button > div {
+        justify-content: flex-start !important;
+    }
 </style>
 """
 
@@ -787,8 +798,10 @@ def render_sidebar(active: str) -> str:
             # 하위 메뉴 — 헤더가 active 일 때만 인덴트 표시
             if is_active_header or admin_open:
                 for sub_idx, (sub_key, sub_label) in enumerate(NAV_ADMIN_SUB):
+                    # 라벨 앞 공백을 넣으면 markdown code block으로 인식되어
+                    # <pre><code> + copy 버튼이 노출되므로, 들여쓰기는 CSS로 처리.
                     sub_btn_label = (
-                        f"· {sub_idx + 1}." if mini else f"     · {sub_label}"
+                        f"·{sub_idx + 1}" if mini else f"· {sub_label}"
                     )
                     is_sub_active = (is_active_header
                                      and current_tab == sub_label)
