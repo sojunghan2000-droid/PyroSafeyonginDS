@@ -198,7 +198,6 @@ def new_inspection_dialog() -> None:
         st.rerun()
 
 
-@st.dialog("회차에 Task 추가", width="large")
 def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     """[+ Task 추가] 모달의 도면 선택 탭. 회차 매칭 장비 마커 + 단일 클릭 선택.
     candidates: 회차 매칭 후보 장비 (미포함만). all_eq: 전체 장비.
@@ -343,6 +342,7 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     return None
 
 
+@st.dialog("회차에 Task 추가", width="large")
 def add_task_to_round_dialog(round_id: str) -> None:
     """v1.5 자유 점검 회차에 Task 1건 동적 추가.
     진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 3가지."""
