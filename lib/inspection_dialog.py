@@ -852,8 +852,15 @@ def task_inspect_dialog(task_id: str) -> None:
                 else:
                     st.warning(f"장비를 찾을 수 없습니다: {picked}")
 
-        # 2) 도면 spot 선택 정정
+        # 2) 도면 spot 선택 정정 — 실제 도면에서 마커 클릭
         with tab_spot:
+            import base64
+            from pathlib import Path
+            import plotly.graph_objects as go
+            from lib.floor_widget import (
+                control_toggle, floor_legend_html, lock_overlay_css, plotly_config,
+            )
+
             all_spots = data.load_spots()
             spot_floors = sorted({s.floor for s in all_spots})
             if not spot_floors:
@@ -862,39 +869,124 @@ def task_inspect_dialog(task_id: str) -> None:
                 )
             else:
                 cur_floor = override_floor if override_floor in spot_floors else spot_floors[0]
-                sc1, sc2 = st.columns([1, 2])
-                with sc1:
-                    floor_pick = st.selectbox(
-                        "층",
-                        options=spot_floors,
-                        index=spot_floors.index(cur_floor),
-                        key=f"tsk_loc_spot_floor_{task_id}",
-                    )
-                with sc2:
-                    floor_spots = [s for s in all_spots if s.floor == floor_pick]
-                    if floor_spots:
-                        spot_idx = st.selectbox(
-                            "위치 spot",
-                            options=range(len(floor_spots)),
-                            format_func=lambda i: (
-                                f"{floor_spots[i].room_name} ({floor_spots[i].spot_id})"
-                            ),
-                            key=f"tsk_loc_spot_pick_{task_id}",
+                floor_pick = st.selectbox(
+                    "층",
+                    options=spot_floors,
+                    index=spot_floors.index(cur_floor),
+                    key=f"tsk_loc_spot_floor_{task_id}",
+                )
+
+                ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+                FIG_W, FIG_H = 2978, 2105
+                img_path = ASSETS_DIR / f"{floor_pick}.png"
+                if not img_path.exists():
+                    st.warning(f"{floor_pick} 도면 이미지가 없습니다.")
+                else:
+                    cc, lc = st.columns([1.2, 5])
+                    with cc:
+                        locked = control_toggle(
+                            f"tsk_loc_map_{task_id}", default_locked=False,
                         )
-                        # 사용자가 정정을 확정해야 적용 (실수 방지)
-                        if st.checkbox(
-                            "이 spot으로 위치 정정",
-                            key=f"tsk_loc_spot_apply_{task_id}",
-                        ):
-                            sel_spot = floor_spots[spot_idx]
-                            override_floor = sel_spot.floor
-                            override_zone = sel_spot.room_name
-                            override_label = (
-                                f"spot 정정 → {sel_spot.spot_id} "
-                                f"({sel_spot.floor}/{sel_spot.room_name})"
+                    with lc:
+                        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+
+                    uri = "data:image/png;base64," + base64.b64encode(
+                        img_path.read_bytes()).decode()
+                    fig = go.Figure()
+                    fig.add_layout_image(dict(
+                        source=uri, xref="x", yref="y",
+                        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+                        sizing="stretch", layer="below", opacity=1.0,
+                    ))
+
+                    floor_spots = [s for s in all_spots if s.floor == floor_pick]
+                    # 현재 적용된 spot 식별 — override_zone 또는 t.zone 기준
+                    cur_spot_id = None
+                    if override_label and "spot 정정 →" in override_label:
+                        # 이미 클릭으로 선택된 spot — label에 spot_id 들어있음
+                        parts = override_label.split("→")[1].strip().split(" ")
+                        if parts:
+                            cur_spot_id = parts[0]
+
+                    other_xs, other_ys, other_txt, other_cd = [], [], [], []
+                    cur_xs, cur_ys, cur_txt = [], [], []
+                    for sp in floor_spots:
+                        x = sp.x_pct / 100 * FIG_W
+                        y = FIG_H - sp.y_pct / 100 * FIG_H
+                        if sp.spot_id == cur_spot_id:
+                            cur_xs.append(x); cur_ys.append(y)
+                            cur_txt.append(sp.spot_id.split("-")[-1])
+                        else:
+                            other_xs.append(x); other_ys.append(y)
+                            other_txt.append(sp.spot_id.split("-")[-1])
+                            other_cd.append((sp.spot_id, sp.room_name, sp.floor))
+
+                    if other_xs:
+                        fig.add_trace(go.Scatter(
+                            x=other_xs, y=other_ys, mode="markers+text",
+                            text=other_txt, textposition="top center",
+                            textfont=dict(size=10, color="#92400E"),
+                            marker=dict(size=16, color="#FDE68A",
+                                        line=dict(color="#F59E0B", width=1.5)),
+                            customdata=other_cd,
+                            hovertemplate=(
+                                "<b>%{customdata[1]}</b><br>"
+                                "%{customdata[0]} · %{customdata[2]}<extra></extra>"
+                            ),
+                            name="spot", showlegend=False,
+                        ))
+                    if cur_xs:
+                        fig.add_trace(go.Scatter(
+                            x=cur_xs, y=cur_ys, mode="markers+text",
+                            text=cur_txt, textposition="top center",
+                            textfont=dict(size=12, color="#1D4ED8"),
+                            marker=dict(size=22, color="#2563EB",
+                                        line=dict(color="#FFFFFF", width=2.5)),
+                            hovertemplate="<b>선택됨</b><extra></extra>",
+                            name="current", showlegend=False,
+                        ))
+
+                    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+                    fig.update_yaxes(visible=False, range=[0, FIG_H],
+                                     scaleanchor="x", scaleratio=1)
+                    fig.update_layout(
+                        margin=dict(l=0, r=0, t=0, b=0),
+                        plot_bgcolor="#F8FAFC", height=420,
+                        dragmode="pan", showlegend=False,
+                        clickmode="event+select",
+                        uirevision=f"floor_tskloc_{floor_pick}",
+                    )
+
+                    if locked:
+                        lock_overlay_css()
+                    event = st.plotly_chart(
+                        fig, use_container_width=True,
+                        config=plotly_config(),
+                        on_select="rerun",
+                        selection_mode=["points"],
+                        key=f"tsk_loc_map_chart_{task_id}_{floor_pick}",
+                    )
+                    if (not locked and event
+                            and getattr(event, "selection", None)
+                            and getattr(event.selection, "points", None)):
+                        pt = event.selection.points[-1]
+                        cd = pt.get("customdata")
+                        if cd:
+                            sel = next(
+                                (s for s in floor_spots if s.spot_id == cd[0]),
+                                None,
                             )
-                    else:
-                        st.caption("이 층에 정의된 spot이 없습니다.")
+                            if sel:
+                                override_floor = sel.floor
+                                override_zone = sel.room_name
+                                override_label = (
+                                    f"spot 정정 → {sel.spot_id} "
+                                    f"({sel.floor}/{sel.room_name})"
+                                )
+                    st.caption(
+                        "도면 위 spot 마커를 탭하면 그 위치로 정정됩니다. "
+                        "파란 마커 = 현재 선택, 옅은 주황 = 다른 spot."
+                    )
 
     if override_label:
         st.markdown(
