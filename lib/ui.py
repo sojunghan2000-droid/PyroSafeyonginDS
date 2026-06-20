@@ -27,9 +27,10 @@ THEME_CSS = """
         padding-bottom: 2rem;
         max-width: 1400px;
     }
-    /* Streamlit 기본 헤더 정리 */
-    header[data-testid="stHeader"] { background: transparent; }
-    div[data-testid="stToolbar"] { display: none; }
+    /* Streamlit 기본 헤더 완전 숨김 — Deploy 버튼·메뉴(⋮)는 커스텀 상단바와 중첩되므로 제거.
+       배포는 git push 기반이라 Deploy 버튼이 사라져도 무방 (PRD_상단바 R2). */
+    header[data-testid="stHeader"] { display: none !important; }
+    div[data-testid="stToolbar"] { display: none !important; }
 
     /* === Top Header Bar === */
     .ps-topbar {
@@ -109,6 +110,28 @@ THEME_CSS = """
     body.ps-has-alerts .st-key-notify_btn button {
         color: #DC2626 !important;
         font-weight: 700 !important;
+    }
+
+    /* 상단바 도움말 버튼 — 알림 벨과 동일 패턴 */
+    .st-key-help_btn {
+        position: fixed; top: 13px; right: 8.5rem;
+        z-index: 9001;
+        width: 38px;
+    }
+    .st-key-help_btn button {
+        width: 38px; height: 38px; min-height: 38px;
+        border-radius: 50% !important;
+        background: transparent !important;
+        border: none !important;
+        color: #64748B !important;
+        padding: 0 !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        line-height: 1 !important;
+    }
+    .st-key-help_btn button:hover {
+        background: #F1F5F9 !important;
+        color: #0F172A !important;
     }
     /* 아바타 메뉴 — st.popover를 상단바 우측에 고정 배치 */
     .st-key-avatar_menu {
@@ -458,26 +481,65 @@ def _notify_count() -> tuple[int, int]:
         return 0, 0
 
 
-def render_topbar(active_page: str = "dashboard") -> None:
+def render_topbar(_active_page: str | None = None) -> None:
+    """전역 상단바 렌더. 인자는 하위 호환용으로만 받고 사용하지 않는다 (PRD R6)."""
     html = """
 <div class="ps-topbar">
     <div class="ps-topbar-brand">Samsung C&amp;T</div>
     <div class="ps-topbar-spacer"></div>
-    <div class="ps-topbar-actions">
-        <div class="ps-icon-btn" title="Help">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                <line x1="12" y1="17" x2="12.01" y2="17"></line>
-            </svg>
-        </div>
-    </div>
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
+    _render_help_button()
     _render_notify_button()
     _render_avatar_menu()
+
+
+# ---- FAQ 콘텐츠 ----
+_HELP_FAQ = [
+    ("알림 벨의 숫자는 무엇인가요?",
+     "조치 대기 통보서 수 + 지연 태스크 수의 합입니다. 클릭하면 "
+     "지적·오동작 관리 페이지로 이동하고 '조치 대기만' 필터가 자동 적용됩니다."),
+    ("신규 점검은 어떻게 입력하나요?",
+     "(1) 데스크탑: 좌측 메뉴 4. 지적·오동작 관리 → '신규 점검 추가' 버튼. "
+     "(2) 모바일: 장비에 부착된 QR 스티커를 휴대폰으로 스캔하면 점검 모달이 즉시 열립니다."),
+    ("QR 코드는 어디서 발급하나요?",
+     "2. 시설 관리 → 각 장비 행의 [QR] 버튼 → 모달에서 PNG 다운로드. "
+     "여러 장비를 한 번에 출력하려면 상단의 [QR 스티커 일괄 출력] (A4 4×6 시트)."),
+    ("점검 일정은 어떻게 등록하나요?",
+     "3. 점검 일정 → [신규 일정 등록]. 점검 유형을 고르면 그 유형이 적용 가능한 장비가 "
+     "자동으로 후보에 나타나며, 모두 선택/일괄 해제로 다중 등록 가능합니다."),
+    ("통보서 PDF는 어디서 출력하나요?",
+     "5. 보고서 → 별지6 카드에서 통보서를 다중 선택하면 합본 PDF로 다운로드 됩니다. "
+     "별지5(지적내역서)와 별지9(오동작)도 동일 페이지에서 출력 가능합니다."),
+    ("위치(spot)는 어떻게 정의하나요?",
+     "관리자 권한이 있으면 사이드바 'A. 관리자 메뉴' → '위치 마스터' 탭에서 "
+     "도면 위 빈 곳을 클릭해 spot을 추가합니다. 기존 spot은 [속성 변경] 버튼으로 편집."),
+    ("모바일에서도 사용할 수 있나요?",
+     "네. KPI 카드는 좌우 슬라이드로 보이고, 조치 사진 입력은 '카메라 촬영' 탭에서 "
+     "휴대폰 카메라로 즉시 촬영할 수 있습니다."),
+    ("데이터가 자동 저장되나요?",
+     "모든 입력은 Supabase에 즉시 저장됩니다. 조치 사진은 Storage 버킷(action-photos)에 "
+     "영구 보관되어 새로고침·재로그인 후에도 그대로 유지됩니다."),
+]
+
+
+@st.dialog("도움말 — PyroSafe 사용 가이드", width="large")
+def _help_dialog() -> None:
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.88rem; margin-bottom:0.6rem;'>"
+        "자주 묻는 질문 8개. 추가 안내는 안전 관리자에게 문의하세요."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    for q, a in _HELP_FAQ:
+        with st.expander(q):
+            st.markdown(a)
+
+
+def _render_help_button() -> None:
+    if st.button("?", key="help_btn", help="도움말 / FAQ"):
+        _help_dialog()
 
 
 def _render_notify_button() -> None:
