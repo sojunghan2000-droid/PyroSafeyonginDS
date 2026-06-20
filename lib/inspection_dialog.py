@@ -199,10 +199,10 @@ def new_inspection_dialog() -> None:
 
 
 def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
-    """[+ Task 추가] 모달의 도면 선택 탭. 회차 매칭 장비 마커 + 단일 클릭 선택.
+    """[+ Task 추가] 모달의 도면 선택 탭. 회차 매칭 장비 + 빈 spot 마커 + 단일 클릭 선택.
     candidates: 회차 매칭 후보 장비 (미포함만). all_eq: 전체 장비.
     already_locs: 이미 회차에 포함된 location_id 집합.
-    선택된 장비 반환 (없으면 None).
+    반환: 선택된 항목 dict ({'type': 'equipment'|'empty_spot', 'data': ...}) 또는 None.
     """
     import base64
     from pathlib import Path
@@ -214,10 +214,14 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
-    # 후보 장비가 있는 층 모음
-    cand_floors = sorted({c.floor for c in candidates if c.floor})
+    # 후보 장비 또는 spot 정의된 층 모음 (빈 spot도 추가 대상이므로 spot 층 포함)
+    all_spots = data.load_spots()
+    spot_floors = {s.floor for s in all_spots}
+    cand_floors = sorted(
+        {c.floor for c in candidates if c.floor} | spot_floors
+    )
     if not cand_floors:
-        st.info("매칭 후보 장비에 층 정보가 없어 도면 선택을 사용할 수 없습니다.")
+        st.info("도면을 표시할 수 있는 층이 없습니다.")
         return None
 
     floor = st.selectbox(
@@ -278,11 +282,12 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         e for e in all_eq
         if e.floor == floor and e.location_id in already_locs
     ]
+    floor_spots = data.load_spots(floor)
     if floor_already:
-        spots = {s.spot_id: s for s in data.load_spots(floor)}
+        spot_map = {s.spot_id: s for s in floor_spots}
         xs, ys, custom = [], [], []
         for e in floor_already:
-            sp = spots.get(e.spot_id) if e.spot_id else None
+            sp = spot_map.get(e.spot_id) if e.spot_id else None
             if not sp:
                 continue
             xs.append(sp.x_pct / 100 * FIG_W)
@@ -291,7 +296,7 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         if xs:
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode="markers",
-                marker=dict(size=14, color="#94A3B8",
+                marker=dict(size=14, color="#64748B",
                             line=dict(color="#FFFFFF", width=1.5)),
                 customdata=custom,
                 hovertemplate=(
@@ -301,6 +306,38 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
                 name="이미 포함", showlegend=False,
                 hoverinfo="text",
             ))
+
+    # 빈 spot (장비 매핑 없는 spot) — 옅은 회색 마커
+    used_spot_ids = {e.spot_id for e in all_eq if e.spot_id and e.floor == floor}
+    # 이미 회차에 빈 spot으로 포함된 라벨 패턴 추적
+    already_empty_spot_ids = {
+        t.equipment_label.split(" - ")[0]
+        for t in data.tasks_of_round(round_id, include_excluded=True)
+        if "(빈 spot)" in t.equipment_label
+    }
+    empty_spots = [s for s in floor_spots if s.spot_id not in used_spot_ids]
+    if empty_spots:
+        xs, ys, txts, custom = [], [], [], []
+        for sp in empty_spots:
+            xs.append(sp.x_pct / 100 * FIG_W)
+            ys.append(FIG_H - sp.y_pct / 100 * FIG_H)
+            in_round = sp.spot_id in already_empty_spot_ids
+            txts.append("빈·포함" if in_round else "빈")
+            custom.append((sp.spot_id, sp.room_name, in_round))
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers+text",
+            text=txts, textposition="bottom center",
+            textfont=dict(size=9, color="#94A3B8"),
+            marker=dict(size=14, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5),
+                        symbol="diamond"),
+            customdata=custom,
+            hovertemplate=(
+                "<b>%{customdata[1]}</b> (빈 spot)<br>"
+                "%{customdata[0]}<extra></extra>"
+            ),
+            name="빈 spot", showlegend=False,
+        ))
 
     fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
     fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
@@ -324,25 +361,45 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         key=f"add_tsk_map_chart_{round_id}_{floor}",
     )
 
-    # 클릭 → 해당 좌표의 후보 장비 1건 선택 (잠금 시 무시)
+    # 클릭 → 후보 장비 또는 빈 spot 선택 (잠금 시 무시)
     if (not locked and event and getattr(event, "selection", None)
             and getattr(event.selection, "points", None)):
         pt = event.selection.points[-1]
         cd = pt.get("customdata")
         if cd:
-            eq_id = cd[0]
-            picked = next((c for c in candidates if c.equipment_id == eq_id), None)
-            if picked:
-                st.success(
-                    f"선택: **{picked.equipment_id}** · {picked.equipment_name} "
-                    f"({picked.location_id})"
+            # 빈 spot 마커 (customdata[2] = in_round bool)
+            if len(cd) >= 3 and isinstance(cd[2], bool):
+                spot_id, room_name, in_round = cd
+                if in_round:
+                    st.warning(
+                        f"{spot_id} ({room_name})는 이미 회차에 포함된 빈 spot입니다."
+                    )
+                else:
+                    sel_spot = next(
+                        (s for s in empty_spots if s.spot_id == spot_id), None
+                    )
+                    if sel_spot:
+                        st.success(
+                            f"선택: **{sel_spot.spot_id}** · {sel_spot.room_name} "
+                            f"(빈 spot — 장비 없음)"
+                        )
+                        return {"type": "empty_spot", "data": sel_spot}
+            else:
+                # 장비 마커
+                eq_id = cd[0]
+                picked = next(
+                    (c for c in candidates if c.equipment_id == eq_id), None
                 )
-                return picked
-            # 회색(이미 포함) 마커 클릭한 경우
-            st.warning(f"{eq_id}는 이미 회차에 포함된 장비입니다.")
+                if picked:
+                    st.success(
+                        f"선택: **{picked.equipment_id}** · "
+                        f"{picked.equipment_name} ({picked.location_id})"
+                    )
+                    return {"type": "equipment", "data": picked}
+                st.warning(f"{eq_id}는 이미 회차에 포함된 장비입니다.")
     st.caption(
-        "도면 위 파란색 마커를 탭하면 그 장비가 선택됩니다. "
-        "회색 마커는 이미 회차에 포함된 장비."
+        "도면 위 파란 마커 = 추가 가능 장비 · 진회색 = 이미 포함된 장비 · "
+        "다이아 = 빈 spot(장비 없음, 클릭해 추가 가능)"
     )
     return None
 
@@ -389,7 +446,8 @@ def add_task_to_round_dialog(round_id: str) -> None:
 
     # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 (모바일 친화)
     tab_pick, tab_qr, tab_map = st.tabs(["직접 선택", "QR 스캔", "📍 도면 선택"])
-    sel_eq = None
+    sel_eq = None        # Equipment (장비 기반 추가)
+    sel_empty_spot = None  # Spot (빈 spot 기반 추가)
     with tab_pick:
         eq_idx = st.selectbox(
             "추가할 장비",
@@ -456,7 +514,11 @@ def add_task_to_round_dialog(round_id: str) -> None:
             round_id, candidates, all_eq, already_locs,
         )
         if picked is not None:
-            sel_eq = picked
+            if picked.get("type") == "empty_spot":
+                sel_empty_spot = picked["data"]
+                sel_eq = None  # 빈 spot은 장비 없음
+            else:
+                sel_eq = picked["data"]
 
     note = st.text_input(
         "메모(선택)",
@@ -464,25 +526,37 @@ def add_task_to_round_dialog(round_id: str) -> None:
         placeholder=r.note,
     )
 
+    has_selection = sel_eq is not None or sel_empty_spot is not None
     if st.button(
         "추가", type="primary", use_container_width=True,
         key=f"add_tsk_submit_{round_id}",
-        disabled=(sel_eq is None),
+        disabled=not has_selection,
     ):
-        if sel_eq is None:
-            st.error("장비를 선택하거나 QR을 인식해 주세요.")
+        if not has_selection:
+            st.error("장비를 선택하거나 QR을 인식하거나 빈 spot을 골라 주세요.")
             return
         from lib.data import next_task_id, add_task, _refresh_round_status
         new_tsk = next_task_id()
+        if sel_empty_spot is not None:
+            # 빈 spot 기반 — 장비 없이 spot 정보만 사용
+            equipment_label = (
+                f"{sel_empty_spot.spot_id} - {sel_empty_spot.room_name} (빈 spot)"
+            )
+            floor = sel_empty_spot.floor
+            zone = sel_empty_spot.room_name
+        else:
+            equipment_label = f"{sel_eq.location_id} - {sel_eq.equipment_name}"
+            floor = sel_eq.floor
+            zone = sel_eq.zone
         add_task(InspectionTask(
             task_id=new_tsk,
-            equipment_label=f"{sel_eq.location_id} - {sel_eq.equipment_name}",
+            equipment_label=equipment_label,
             task_type=r.task_type,
             assignee=r.assignee or "Unassigned",
             due_date=r.due_date,
             status="Scheduled",
-            floor=sel_eq.floor,
-            zone=sel_eq.zone,
+            floor=floor,
+            zone=zone,
             note=note.strip() or r.note,
             round_id=round_id,
         ))
