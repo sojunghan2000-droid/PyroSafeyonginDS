@@ -229,10 +229,20 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         key=f"add_tsk_map_floor_{round_id}",
     )
 
-    # 컨트롤 토글 + 범례
-    cc, lc = st.columns([1.2, 5])
+    # 컨트롤 토글 + 임시 위치 추가 토글 + 범례
+    cc, ac, lc = st.columns([1.2, 1.6, 4])
     with cc:
         locked = control_toggle(f"add_tsk_map_{round_id}", default_locked=False)
+    with ac:
+        add_spot_mode_key = f"add_tsk_add_spot_mode_{round_id}"
+        if add_spot_mode_key not in st.session_state:
+            st.session_state[add_spot_mode_key] = False
+        add_spot_mode = st.toggle(
+            "🆕 임시 위치 추가",
+            value=st.session_state[add_spot_mode_key],
+            key=add_spot_mode_key,
+            help="ON 시 도면 빈 곳 클릭으로 임시 spot 좌표 픽업 (기본 OFF)",
+        )
     with lc:
         st.markdown(floor_legend_html(), unsafe_allow_html=True)
 
@@ -366,27 +376,26 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             name="임시 spot", showlegend=False,
         ))
 
-    # 클릭 가능한 격자 — 빈 곳 클릭으로 임시 spot 좌표 픽업
-    # 사용자가 클릭 영역을 인지하도록 살짝 보이는 점(매우 흐린 회색) +
-    # 호버 시 안내 텍스트로 어디든 클릭 가능함을 시각적으로 전달.
-    grid_x, grid_y = [], []
-    for i in range(50):
-        for j in range(50):
-            grid_x.append((i + 0.5) / 50 * FIG_W)
-            grid_y.append((j + 0.5) / 50 * FIG_H)
-    fig.add_trace(go.Scatter(
-        x=grid_x, y=grid_y,
-        mode="markers",
-        marker=dict(
-            size=10,
-            color="rgba(100,116,139,0.18)",
-            line=dict(width=0),
-        ),
-        customdata=[("grid",)] * len(grid_x),
-        hovertemplate="여기 클릭 → 임시 spot 좌표 픽업<extra></extra>",
-        showlegend=False,
-        name="grid",
-    ))
+    # 임시 위치 추가 모드 ON일 때만 클릭 가능 격자 추가
+    if add_spot_mode:
+        grid_x, grid_y = [], []
+        for i in range(50):
+            for j in range(50):
+                grid_x.append((i + 0.5) / 50 * FIG_W)
+                grid_y.append((j + 0.5) / 50 * FIG_H)
+        fig.add_trace(go.Scatter(
+            x=grid_x, y=grid_y,
+            mode="markers",
+            marker=dict(
+                size=10,
+                color="rgba(59,130,246,0.22)",
+                line=dict(width=0),
+            ),
+            customdata=[("grid",)] * len(grid_x),
+            hovertemplate="여기 클릭 → 임시 spot 좌표 픽업<extra></extra>",
+            showlegend=False,
+            name="grid",
+        ))
 
     fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
     fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
@@ -507,11 +516,17 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
                 st.session_state.pop(pending_grid_key, None)
                 st.session_state.pop(f"add_tsk_temp_desc_{round_id}", None)
 
-    st.caption(
-        "🔵 파란 원 = 추가 가능 장비 · ⚫ 진회색 = 이미 포함 · "
-        "◇ 회색 다이아 = 빈 spot · 🔷 파란 다이아 = 임시 spot · "
-        "도면 빈 곳 클릭하면 임시 spot 좌표 픽업 (관리자 검증 후 정식)"
-    )
+    if add_spot_mode:
+        st.caption(
+            "🆕 임시 위치 추가 모드 — 도면 빈 곳 클릭으로 좌표 픽업. "
+            "마커 클릭은 기존 장비/spot 선택."
+        )
+    else:
+        st.caption(
+            "🔵 파란 원 = 추가 가능 장비 · ⚫ 진회색 = 이미 포함 · "
+            "◇ 회색 다이아 = 빈 spot · 🔷 파란 다이아 = 임시 spot · "
+            "임시 위치를 새로 만들려면 상단 토글 활성화"
+        )
     return None
 
 
