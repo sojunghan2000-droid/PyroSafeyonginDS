@@ -10,12 +10,14 @@ import streamlit as st
 
 from lib import data
 from lib.data import (
-    Deficiency, Equipment, InspectionTask, Malfunction, Notice,
+    Deficiency, Equipment, InspectionRound, InspectionTask, Malfunction, Notice,
     TASK_INSPECTION_TYPES,
-    add_deficiency, add_equipment, add_malfunction, add_notice, add_task,
+    add_deficiency, add_equipment, add_malfunction, add_notice,
+    add_round, add_task,
     default_inspection_types_for,
     location_id_from_spot,
-    next_equipment_id, next_notice_no, next_serial, next_task_id,
+    next_equipment_id, next_notice_no, next_round_id, next_serial,
+    next_task_id,
 )
 from lib.qr import make_qr, payload_for
 from lib.ui import badge, photo_input
@@ -142,6 +144,16 @@ def new_inspection_dialog() -> None:
             st.error("불량인 경우 지적사항을 입력해 주세요.")
             return
 
+        # 이 장비의 활성 회차에서 미완료 Task 자동 매핑 (있으면)
+        matched_task_id: str | None = None
+        for t in data.load_tasks():
+            if (t.round_id and not t.excluded
+                    and t.equipment_label
+                    and eq.location_id in t.equipment_label
+                    and t.status not in ("Completed",)):
+                matched_task_id = t.task_id
+                break
+
         new_no = None
         if result == "불량":
             new_no = next_notice_no(inspect_date)
@@ -158,6 +170,7 @@ def new_inspection_dialog() -> None:
                 action_at=inspect_date if action_immediate else None,
                 action_note=action_note_now.strip() if action_immediate else "",
                 action_photo=photo_bytes,
+                task_id=matched_task_id,
             ))
 
         new_def_id = data.next_deficiency_id()
@@ -170,6 +183,7 @@ def new_inspection_dialog() -> None:
             resolution=("완료" if (result == "양호" or action_immediate) else "불가"),  # type: ignore[arg-type]
             confirmer=confirmer if (result == "양호" or action_immediate) else None,
             notice_no=new_no,
+            task_id=matched_task_id,
         ))
 
         # 장비의 최근 점검일·건강 상태 갱신 (KPI 카드 즉시 반영)
@@ -508,8 +522,18 @@ def task_dialog() -> None:
             st.error("점검 유형을 선택(또는 입력)해 주세요.")
             return
 
-        created_ids: list[str] = []
         assignee_value = assignee.strip() or "Unassigned"
+        # 회차(Round) 1건 + 그 안에 Task N건 — 모두 같은 round_id 공유
+        round_id = next_round_id()
+        add_round(InspectionRound(
+            round_id=round_id,
+            task_type=resolved_type,
+            assignee=assignee_value,
+            due_date=due_date,
+            status="Scheduled",
+            note=note.strip(),
+        ))
+        created_ids: list[str] = []
         for eq in selected_eqs:
             tsk_id = next_task_id()  # 매 호출마다 +1 (세션 누적 반영)
             add_task(InspectionTask(
@@ -522,10 +546,12 @@ def task_dialog() -> None:
                 floor=eq.floor,
                 zone=eq.zone,
                 note=note.strip(),
+                round_id=round_id,
             ))
             created_ids.append(tsk_id)
 
         st.session_state["just_submitted_tasks"] = created_ids
+        st.session_state["just_submitted_round"] = round_id
         # 다음 모달 진입 시 입력 초기화 위해 키 제거
         for k in ("task_dlg_last_type", "task_dlg_eq_idxs"):
             st.session_state.pop(k, None)

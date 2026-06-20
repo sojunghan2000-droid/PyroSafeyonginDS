@@ -115,6 +115,23 @@ class InspectionTask:
     floor: str
     zone: str
     note: str = ""
+    # v1.4: 점검 회차 FK + 제외 로그
+    round_id: str | None = None
+    excluded: bool = False
+    excluded_at: date | None = None
+    excluded_by: str | None = None
+    excluded_reason: str = ""
+
+
+@dataclass
+class InspectionRound:
+    """점검 회차. 신규 일정 등록 시 1개 회차 + N개 Task가 함께 생성됨."""
+    round_id: str
+    task_type: str
+    assignee: str
+    due_date: date
+    status: TaskStatus
+    note: str = ""
 
 
 @dataclass
@@ -130,6 +147,7 @@ class Deficiency:
     resolution: ResolutionStatus
     confirmer: str | None
     notice_no: str | None
+    task_id: str | None = None  # v1.4: 점검 회차의 Task에 자동 매핑
 
 
 @dataclass
@@ -150,6 +168,7 @@ class Notice:
     action_note: str = ""
     action_photo: bytes | None = None       # 메모리 캐시 (업로드 직후)
     action_photo_path: str | None = None    # Storage 내 경로
+    task_id: str | None = None              # v1.4: 점검 회차의 Task에 자동 매핑
 
 
 @dataclass
@@ -161,6 +180,7 @@ class Malfunction:
     detail: str
     action: str
     confirmer: str
+    task_id: str | None = None  # v1.4: 점검 회차의 Task에 자동 매핑
 
 
 # ---------- Supabase 클라이언트 ----------
@@ -246,6 +266,20 @@ def _row_to_task(r: dict) -> InspectionTask:
         task_type=r["task_type"], assignee=r["assignee"],
         due_date=_d(r["due_date"]), status=r["status"],
         floor=r["floor"], zone=r["zone"], note=r.get("note") or "",
+        round_id=r.get("round_id"),
+        excluded=bool(r.get("excluded") or False),
+        excluded_at=_d(r.get("excluded_at")),
+        excluded_by=r.get("excluded_by"),
+        excluded_reason=r.get("excluded_reason") or "",
+    )
+
+
+def _row_to_round(r: dict) -> InspectionRound:
+    return InspectionRound(
+        round_id=r["round_id"], task_type=r["task_type"],
+        assignee=r.get("assignee") or "",
+        due_date=_d(r["due_date"]),
+        status=r["status"], note=r.get("note") or "",
     )
 
 
@@ -256,6 +290,7 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         inspection_types=list(r.get("inspection_types") or []),
         issue=r["issue"], resolution=r["resolution"],
         confirmer=r.get("confirmer"), notice_no=r.get("notice_no"),
+        task_id=r.get("task_id"),
     )
 
 
@@ -270,6 +305,7 @@ def _row_to_notice(r: dict) -> Notice:
         action_note=r.get("action_note") or "",
         action_photo=None,
         action_photo_path=r.get("action_photo_path"),
+        task_id=r.get("task_id"),
     )
 
 
@@ -278,6 +314,7 @@ def _row_to_malfunction(r: dict) -> Malfunction:
         malfunction_id=r["malfunction_id"], category=r["category"],
         occurred_on=_d(r["occurred_on"]), detail=r["detail"],
         action=r.get("action") or "", confirmer=r.get("confirmer") or "",
+        task_id=r.get("task_id"),
     )
 
 
@@ -317,6 +354,12 @@ def _spot_rows() -> list[dict]:
             .order("floor").order("spot_id").execute().data)
 
 
+@st.cache_data(ttl=_CACHE_TTL)
+def _round_rows() -> list[dict]:
+    return (_db().table("inspection_rounds").select("*")
+            .order("due_date", desc=True).execute().data)
+
+
 def load_equipment() -> list[Equipment]:
     return [_row_to_equipment(r) for r in _equipment_rows()]
 
@@ -350,6 +393,52 @@ def get_spot(spot_id: str) -> Spot | None:
         if r["spot_id"] == spot_id:
             return _row_to_spot(r)
     return None
+
+
+def load_rounds() -> list[InspectionRound]:
+    return [_row_to_round(r) for r in _round_rows()]
+
+
+def get_round(round_id: str) -> InspectionRound | None:
+    for r in _round_rows():
+        if r["round_id"] == round_id:
+            return _row_to_round(r)
+    return None
+
+
+def tasks_of_round(round_id: str, include_excluded: bool = False) -> list[InspectionTask]:
+    """회차에 속한 Task 목록. 기본은 제외된 Task 빼고 반환."""
+    items = [t for t in load_tasks() if t.round_id == round_id]
+    if not include_excluded:
+        items = [t for t in items if not t.excluded]
+    return items
+
+
+def round_progress(round_id: str) -> tuple[int, int]:
+    """(완료된 Task 수, 전체 Task 수). 제외된 Task는 제외."""
+    tasks = tasks_of_round(round_id)
+    total = len(tasks)
+    done = sum(1 for t in tasks if t.status == "Completed")
+    return done, total
+
+
+def compute_round_status(round_id: str) -> str:
+    """회차의 자동 status 계산.
+    - 모든 Task Completed → Completed
+    - Overdue Task 1+ → Overdue
+    - In Progress Task 1+ → In Progress
+    - 그 외 → Scheduled
+    제외된 Task는 분모에서 빠짐. Task가 0건이면 Scheduled 반환."""
+    tasks = tasks_of_round(round_id)
+    if not tasks:
+        return "Scheduled"
+    if all(t.status == "Completed" for t in tasks):
+        return "Completed"
+    if any(t.status == "Overdue" for t in tasks):
+        return "Overdue"
+    if any(t.status == "In Progress" for t in tasks):
+        return "In Progress"
+    return "Scheduled"
 
 
 # ---------- 쓰기 ----------
@@ -470,8 +559,68 @@ def add_task(t: InspectionTask) -> None:
         "task_type": t.task_type, "assignee": t.assignee,
         "due_date": _iso(t.due_date), "status": t.status,
         "floor": t.floor, "zone": t.zone, "note": t.note,
+        "round_id": t.round_id,
     }).execute()
     _task_rows.clear()
+
+
+def add_round(r: InspectionRound) -> None:
+    _db().table("inspection_rounds").insert({
+        "round_id": r.round_id, "task_type": r.task_type,
+        "assignee": r.assignee, "due_date": _iso(r.due_date),
+        "status": r.status, "note": r.note,
+    }).execute()
+    _round_rows.clear()
+
+
+def _refresh_round_status(round_id: str) -> None:
+    """회차의 자동 status를 계산해 갱신."""
+    new_status = compute_round_status(round_id)
+    _db().table("inspection_rounds").update(
+        {"status": new_status}
+    ).eq("round_id", round_id).execute()
+    _round_rows.clear()
+
+
+def exclude_task(task_id: str, reason: str, by: str) -> None:
+    """Task를 제외 (점검 대상에서 빼되 로그는 보존). 회차 status 자동 갱신."""
+    from datetime import date as _date
+    res = _db().table("inspection_tasks").update({
+        "excluded": True,
+        "excluded_at": _date.today().isoformat(),
+        "excluded_by": by,
+        "excluded_reason": reason,
+    }).eq("task_id", task_id).execute()
+    _task_rows.clear()
+    # 해당 Task의 회차 status 재계산
+    for r in (res.data or []):
+        round_id = r.get("round_id")
+        if round_id:
+            _refresh_round_status(round_id)
+
+
+def restore_task(task_id: str) -> None:
+    """제외된 Task를 복구."""
+    res = _db().table("inspection_tasks").update({
+        "excluded": False,
+        "excluded_at": None,
+        "excluded_by": None,
+        "excluded_reason": "",
+    }).eq("task_id", task_id).execute()
+    _task_rows.clear()
+    for r in (res.data or []):
+        if r.get("round_id"):
+            _refresh_round_status(r["round_id"])
+
+
+def next_round_id() -> str:
+    """다음 회차 ID. 형식: RND-YYYYMMDD-NNN (오늘 날짜 + 일내 순번)."""
+    today = TODAY.strftime("%Y%m%d")
+    prefix = f"RND-{today}-"
+    existing = [r["round_id"] for r in _round_rows()
+                if r["round_id"].startswith(prefix)]
+    next_n = len(existing) + 1
+    return f"{prefix}{next_n:03d}"
 
 
 def add_deficiency(d: Deficiency) -> None:
@@ -482,6 +631,7 @@ def add_deficiency(d: Deficiency) -> None:
         "inspection_types": list(d.inspection_types or []),
         "issue": d.issue, "resolution": d.resolution,
         "confirmer": d.confirmer, "notice_no": d.notice_no,
+        "task_id": d.task_id,
     }).execute()
     _deficiency_rows.clear()
 
@@ -497,6 +647,7 @@ def add_notice(n: Notice) -> None:
         "photo_path": n.photo_path, "submitter": n.submitter,
         "confirmer": n.confirmer, "action_done": n.action_done,
         "action_at": _iso(n.action_at), "action_note": n.action_note,
+        "task_id": n.task_id,
         "action_photo_path": photo_path,
     }).execute()
     _notice_rows.clear()
@@ -507,6 +658,7 @@ def add_malfunction(m: Malfunction) -> None:
         "malfunction_id": m.malfunction_id, "category": m.category,
         "occurred_on": _iso(m.occurred_on), "detail": m.detail,
         "action": m.action, "confirmer": m.confirmer,
+        "task_id": m.task_id,
     }).execute()
     _malfunction_rows.clear()
 
