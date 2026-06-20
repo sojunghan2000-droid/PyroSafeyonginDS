@@ -115,6 +115,8 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
     # 데이터 행
     types_all = ["임시소방시설", "피난로 등", "화기취급감독"]
     deficiencies = data.load_deficiencies()
+    # task_id → equipment_label 매핑 (지적사항 컬럼 prefix용)
+    task_label_map = {t.task_id: t.equipment_label for t in data.load_tasks()}
     if round_id:
         round_tasks = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
         deficiencies = [d for d in deficiencies if d.task_id in round_tasks]
@@ -123,10 +125,15 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
         type_lines = [
             f"• {t}( {'O' if t in d.inspection_types else '&nbsp;'} )" for t in types_all
         ]
+        # 지적사항 컬럼 형식: "장비명 (양호 또는 지적내용)" — v1.5+
+        eq_label = task_label_map.get(d.task_id, "")
+        is_good = (d.resolution == "완료" and not d.notice_no)
+        body = "양호" if is_good else (d.issue or "지적사항 없음")
+        issue_text = f"{eq_label} ({body})" if eq_label else body
         rows.append([
             Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),
             Paragraph("<br/>".join(type_lines), s["left"]),
-            Paragraph(d.issue, s["left"]),
+            Paragraph(issue_text, s["left"]),
             Paragraph(d.confirmer or "", s["cell"]) if d.resolution == "완료" else "",
             Paragraph(d.notice_no or "", s["cell"]) if d.resolution == "불가" else "",
         ])
