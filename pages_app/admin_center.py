@@ -85,6 +85,8 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
         dragmode="pan",
         showlegend=False,
         clickmode="event+select",
+        # 토글로 staticPlot 전환 시에도 사용자 줌/팬 상태 유지
+        uirevision=f"floor_{floor}",
     )
     return fig
 
@@ -297,6 +299,7 @@ def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | Non
         plot_bgcolor="#F8FAFC", height=520,
         dragmode="pan", showlegend=False,
         clickmode="event+select",
+        uirevision=f"floor_edit_{cur_spot.floor}",
     )
     return fig
 

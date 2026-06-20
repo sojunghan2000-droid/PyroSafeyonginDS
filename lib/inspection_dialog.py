@@ -309,6 +309,8 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         plot_bgcolor="#F8FAFC", height=520,
         dragmode="pan", showlegend=False,
         clickmode="event+select",
+        # 잠금 토글 시 줌/팬 상태 유지
+        uirevision=f"floor_addtsk_{floor}",
     )
 
     event = st.plotly_chart(

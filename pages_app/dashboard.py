@@ -215,6 +215,8 @@ def _make_floor_plan_figure(floor: str, items=None, spots=None) -> go.Figure | N
         height=620,
         dragmode="pan",
         showlegend=False,
+        # 잠금 토글 시 줌/팬 상태 유지 (층 변경 시 자동 reset)
+        uirevision=f"floor_{floor}",
     )
     return fig
 
