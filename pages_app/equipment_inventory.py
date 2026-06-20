@@ -460,7 +460,7 @@ def render() -> None:
                          use_container_width=True):
                 open_status_for = e.equipment_id
         with cols[6]:
-            if st.button("QR", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
+            if st.button("속성", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
                 _qr_dialog(e.equipment_id)
 
     if open_status_for:
