@@ -313,6 +313,9 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         uirevision=f"floor_addtsk_{floor}",
     )
 
+    if locked:
+        from lib.floor_widget import lock_overlay_css
+        lock_overlay_css()
     event = st.plotly_chart(
         fig, use_container_width=True,
         config=plotly_config(),
@@ -320,9 +323,6 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         selection_mode=["points"],
         key=f"add_tsk_map_chart_{round_id}_{floor}",
     )
-    if locked:
-        from lib.floor_widget import lock_overlay_css
-        lock_overlay_css()
 
     # 클릭 → 해당 좌표의 후보 장비 1건 선택 (잠금 시 무시)
     if (not locked and event and getattr(event, "selection", None)

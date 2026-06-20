@@ -141,6 +141,9 @@ def _spot_edit_dialog(spot_id: str) -> None:
         with lc:
             st.markdown(floor_legend_html(), unsafe_allow_html=True)
 
+        # CSS는 plotly_chart 전에 주입 — timing 안정성
+        if locked:
+            lock_overlay_css()
         # plotly_chart props는 잠금 상태와 무관하게 항상 동일 — Plotly 재마운트 회피
         event = st.plotly_chart(
             fig, use_container_width=True,
@@ -149,10 +152,7 @@ def _spot_edit_dialog(spot_id: str) -> None:
             selection_mode=["points"],
             key=f"edit_map_chart_{spot_id}",
         )
-        # 잠금 시: CSS overlay로 인터랙션 차단 + modebar 숨김
-        if locked:
-            lock_overlay_css()
-        elif (event and getattr(event, "selection", None)
+        if (not locked and event and getattr(event, "selection", None)
                 and getattr(event.selection, "points", None)):
             pt = event.selection.points[-1]
             st.session_state[init_x_key] = round(pt["x"] / FIG_W * 100, 2)
@@ -341,6 +341,9 @@ def _spot_define_dialog() -> None:
     with leg_col:
         st.markdown(floor_legend_html(), unsafe_allow_html=True)
 
+    if locked:
+        from lib.floor_widget import lock_overlay_css
+        lock_overlay_css()
     event = st.plotly_chart(
         fig,
         use_container_width=True,
@@ -349,9 +352,6 @@ def _spot_define_dialog() -> None:
         selection_mode=["points"],
         key=f"admin_dlg_chart_{floor}",
     )
-    if locked:
-        from lib.floor_widget import lock_overlay_css
-        lock_overlay_css()
 
     if (not locked and event and getattr(event, "selection", None)
             and getattr(event.selection, "points", None)):

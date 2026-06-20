@@ -261,21 +261,21 @@ def _floor_detail_dialog(floor: str) -> None:
         )
     else:
         from lib.floor_widget import (
-            control_toggle, floor_legend_html, plotly_config,
+            control_toggle, floor_legend_html, lock_overlay_css, plotly_config,
         )
         ctrl_col, leg_col = st.columns([1.2, 5])
         with ctrl_col:
             locked = control_toggle(f"floor_plan_{floor}", default_locked=False)
         with leg_col:
             st.markdown(floor_legend_html(), unsafe_allow_html=True)
+        # CSS는 plotly_chart 전에 주입 — timing 안정성
+        if locked:
+            lock_overlay_css()
         st.plotly_chart(
             fig, use_container_width=True,
             config=plotly_config(),
             key=f"floor_plan_{floor}",
         )
-        if locked:
-            from lib.floor_widget import lock_overlay_css
-            lock_overlay_css()
         st.markdown(
             "<div style='color:#64748B; font-size:0.78rem; margin-top:-0.5rem;'>"
             "휠/핀치 줌 · 드래그 팬 · 🏠 아이콘으로 전체 도면 보기 · "

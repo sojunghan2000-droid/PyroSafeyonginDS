@@ -39,24 +39,23 @@ def floor_legend_html() -> str:
 
 
 def control_toggle(key: str, default_locked: bool = False) -> bool:
-    """도면 위에 표시할 잠금/조작 토글. True=잠금(staticPlot), False=조작 가능.
+    """도면 위에 표시할 잠금/조작 토글. True=잠금, False=조작 가능.
 
-    session_state[key]에 상태 저장. 호출 측에서 plotly_chart config에 반영.
+    same-cycle 토글: button 클릭 시 session_state + 지역 locked를 즉시 갱신해
+    같은 rerun에서 lock_overlay_css 분기와 호출 측 동작에 새 값이 반영된다.
+    라벨은 한 박자 늦게 갱신될 수 있으나 동작 자체는 즉시 새 상태로 적용.
 
-    NOTE: st.rerun() 명시 호출 금지 — dialog 내부에서 호출 시 모달이 닫힘.
-    streamlit의 button 클릭은 자체적으로 rerun을 트리거하므로 불필요.
-    같은 rerun 내에서 토글값을 즉시 반영하기 위해 locked 변수도 갱신해 반환.
+    NOTE: st.rerun() / on_click callback 모두 사용 금지 —
+    dialog 내부에서 호출 시 모달이 닫힌다.
     """
     state_key = f"floor_lock_{key}"
     if state_key not in st.session_state:
         st.session_state[state_key] = default_locked
     locked = st.session_state[state_key]
-    # 라벨은 "클릭하면 무엇이 될지(결과형)" — 현재 상태가 아닌 다음 액션을 안내
-    # · locked=False(조작 중) → "🔒 잠금"  (이 버튼 누르면 잠금됨)
-    # · locked=True(잠금 중) → "🔓 잠금 해제" (이 버튼 누르면 해제됨)
-    label = "🔓 잠금 해제" if locked else "🔒 잠금"
+    # 동사형 라벨 — 클릭 시 무엇이 일어날지 명확히
+    label = "🔓 도면 풀기" if locked else "🔒 도면 잠그기"
     help_txt = (
-        "현재 잠금 — pan/zoom 비활성, modebar 숨김. 클릭하면 조작 가능 상태로"
+        "현재 잠금 — pan/zoom 비활성, modebar 숨김. 클릭하면 풀림"
         if locked else
         "현재 조작 가능 — 휠/드래그로 줌·팬. 클릭하면 잠금"
     )
