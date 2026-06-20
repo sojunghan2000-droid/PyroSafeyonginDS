@@ -78,6 +78,10 @@ def lock_overlay_css() -> None:
     """잠금 시 호출 — 같은 스코프(페이지/dialog) 내 stPlotlyChart에
     pointer-events:none + modebar 숨김 + 잠금 배지를 주입한다.
 
+    Plotly가 SVG 자식 (nsewdrag, scatter trace 등)에 inline pointer-events:all 을
+    설정하므로, 부모만 none으로 만들면 자식의 inline이 우선해 클릭이 통과한다.
+    따라서 자식 전부에 `pointer-events: none !important` 강제.
+
     config / on_select / selection_mode 등 plotly_chart props가 변하지 않아
     Plotly 인스턴스가 재마운트되지 않고 줌/팬 상태가 그대로 유지된다.
     """
@@ -86,6 +90,10 @@ def lock_overlay_css() -> None:
         <style id="floor_lock_overlay">
         div[data-testid="stPlotlyChart"] {
             position: relative;
+        }
+        /* SVG 내부 모든 인터랙티브 요소(nsewdrag, point, etc) 차단 */
+        div[data-testid="stPlotlyChart"],
+        div[data-testid="stPlotlyChart"] * {
             pointer-events: none !important;
         }
         div[data-testid="stPlotlyChart"]::after {
@@ -99,7 +107,7 @@ def lock_overlay_css() -> None:
             font-size: 0.75rem;
             font-weight: 700;
             z-index: 50;
-            pointer-events: none;
+            pointer-events: none !important;
         }
         div[data-testid="stPlotlyChart"] .modebar,
         div[data-testid="stPlotlyChart"] .modebar-container {
