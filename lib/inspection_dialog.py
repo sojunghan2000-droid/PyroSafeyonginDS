@@ -200,7 +200,7 @@ def new_inspection_dialog() -> None:
 
 @st.dialog("회차에 Task 추가", width="large")
 def add_task_to_round_dialog(round_id: str) -> None:
-    """v1.5 자유 점검 회차에 Task 1건 동적 추가."""
+    """v1.5 자유 점검 회차에 Task 1건 동적 추가. 직접 선택 / QR 스캔 2가지 진입."""
     r = data.get_round(round_id)
     if not r:
         st.error("회차를 찾을 수 없습니다.")
@@ -237,16 +237,70 @@ def add_task_to_round_dialog(round_id: str) -> None:
         )
         return
 
-    eq_idx = st.selectbox(
-        "추가할 장비",
-        options=range(len(candidates)),
-        format_func=lambda i: (
-            f"{candidates[i].location_id} · {candidates[i].equipment_name} "
-            f"({candidates[i].category})"
-        ),
-        key=f"add_tsk_eq_{round_id}",
-    )
-    sel_eq = candidates[eq_idx]
+    # 진입 방식 — 직접 선택 / QR 스캔 (모바일 친화)
+    tab_pick, tab_qr = st.tabs(["직접 선택", "QR 스캔"])
+    sel_eq = None
+    with tab_pick:
+        eq_idx = st.selectbox(
+            "추가할 장비",
+            options=range(len(candidates)),
+            format_func=lambda i: (
+                f"{candidates[i].location_id} · {candidates[i].equipment_name} "
+                f"({candidates[i].category})"
+            ),
+            key=f"add_tsk_eq_{round_id}",
+        )
+        sel_eq = candidates[eq_idx]
+    with tab_qr:
+        st.caption("장비에 부착된 QR을 카메라로 비추면 해당 장비가 자동 선택됩니다.")
+        try:
+            from streamlit_qrcode_scanner import qrcode_scanner
+            qr_val = qrcode_scanner(key=f"add_tsk_qr_{round_id}")
+        except Exception as e:
+            st.error(f"QR 스캐너를 불러올 수 없습니다 ({e}). 직접 선택 탭을 이용해 주세요.")
+            qr_val = None
+        manual = st.text_input(
+            "수동 입력 (EQ-NNNN 또는 QR 페이로드 URL)",
+            key=f"add_tsk_manual_{round_id}",
+            placeholder="예: EQ-0006",
+        )
+        # 페이로드 → equipment_id 추출 (대시보드 점검 모달과 동일 로직)
+        import re
+
+        def _extract(payload):
+            if not payload:
+                return None
+            s = str(payload).strip()
+            m = re.search(r"[?&]eq=([A-Za-z0-9\-]+)", s)
+            if m:
+                return m.group(1).upper()
+            m = re.search(r"\bEQ-\d{4,}\b", s.upper())
+            return m.group(0) if m else None
+
+        eq_id = _extract(qr_val) or _extract(manual)
+        if eq_id:
+            matched = next((c for c in candidates if c.equipment_id == eq_id), None)
+            if matched:
+                sel_eq = matched
+                st.success(
+                    f"인식: {matched.equipment_id} · {matched.equipment_name} "
+                    f"({matched.location_id})"
+                )
+            else:
+                # 회차 후보에는 없지만 전체 장비에 있는 경우
+                other = next((e for e in all_eq if e.equipment_id == eq_id), None)
+                if other and other.location_id in already_locs:
+                    st.warning(
+                        f"{eq_id}는 이미 이 회차에 포함된 장비입니다."
+                    )
+                elif other:
+                    st.warning(
+                        f"{eq_id}는 이 회차 점검 유형({r.task_type})에 매핑되어 있지 않습니다. "
+                        f"장비 마스터의 inspection_types에 추가 후 다시 시도하세요."
+                    )
+                else:
+                    st.error(f"장비를 찾을 수 없습니다: {eq_id}")
+
     note = st.text_input(
         "메모(선택)",
         key=f"add_tsk_note_{round_id}",
@@ -256,7 +310,11 @@ def add_task_to_round_dialog(round_id: str) -> None:
     if st.button(
         "추가", type="primary", use_container_width=True,
         key=f"add_tsk_submit_{round_id}",
+        disabled=(sel_eq is None),
     ):
+        if sel_eq is None:
+            st.error("장비를 선택하거나 QR을 인식해 주세요.")
+            return
         from lib.data import next_task_id, add_task, _refresh_round_status
         new_tsk = next_task_id()
         add_task(InspectionTask(
