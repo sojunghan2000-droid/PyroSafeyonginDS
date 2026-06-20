@@ -439,6 +439,113 @@ def task_inspect_dialog(task_id: str) -> None:
             unsafe_allow_html=True,
         )
 
+    # 위치 정정 (선택) — Deficiency 저장 시 우선 적용
+    override_floor = eq.floor if eq else t.floor
+    override_zone = eq.zone if eq else t.zone
+    override_label = None  # 사용자 표시용
+
+    with st.expander("장소·구역 정정 (선택)"):
+        st.caption(
+            "장비 정보의 층/구역이 맞지 않으면 QR 스캔으로 다른 장비를 인식하거나 "
+            "도면의 위치(spot)를 직접 골라 정정합니다. 정정된 값은 별지5 row에 반영됩니다."
+        )
+        tab_qr, tab_spot = st.tabs(["QR 스캔", "도면 spot 선택"])
+
+        # 1) QR 스캔 정정
+        with tab_qr:
+            try:
+                from streamlit_qrcode_scanner import qrcode_scanner
+                qr_val = qrcode_scanner(key=f"tsk_loc_qr_{task_id}")
+            except Exception as e:
+                st.error(f"QR 스캐너를 불러올 수 없습니다 ({e}).")
+                qr_val = None
+            qr_manual = st.text_input(
+                "수동 입력 (EQ-NNNN 또는 QR 페이로드 URL)",
+                key=f"tsk_loc_qr_manual_{task_id}",
+                placeholder="예: EQ-0006",
+            )
+            import re
+
+            def _extract(payload):
+                if not payload:
+                    return None
+                s = str(payload).strip()
+                m = re.search(r"[?&]eq=([A-Za-z0-9\-]+)", s)
+                if m:
+                    return m.group(1).upper()
+                m = re.search(r"\bEQ-\d{4,}\b", s.upper())
+                return m.group(0) if m else None
+
+            picked = _extract(qr_val) or _extract(qr_manual)
+            if picked:
+                p_eq = next(
+                    (e for e in data.load_equipment() if e.equipment_id == picked),
+                    None,
+                )
+                if p_eq:
+                    override_floor = p_eq.floor
+                    override_zone = p_eq.zone
+                    override_label = (
+                        f"QR 스캔 정정 → {p_eq.location_id} "
+                        f"({p_eq.floor}/{p_eq.zone}) · {p_eq.equipment_name}"
+                    )
+                else:
+                    st.warning(f"장비를 찾을 수 없습니다: {picked}")
+
+        # 2) 도면 spot 선택 정정
+        with tab_spot:
+            all_spots = data.load_spots()
+            spot_floors = sorted({s.floor for s in all_spots})
+            if not spot_floors:
+                st.info(
+                    "정의된 spot이 없습니다. 관리자 메뉴 → 위치 마스터에서 등록."
+                )
+            else:
+                cur_floor = override_floor if override_floor in spot_floors else spot_floors[0]
+                sc1, sc2 = st.columns([1, 2])
+                with sc1:
+                    floor_pick = st.selectbox(
+                        "층",
+                        options=spot_floors,
+                        index=spot_floors.index(cur_floor),
+                        key=f"tsk_loc_spot_floor_{task_id}",
+                    )
+                with sc2:
+                    floor_spots = [s for s in all_spots if s.floor == floor_pick]
+                    if floor_spots:
+                        spot_idx = st.selectbox(
+                            "위치 spot",
+                            options=range(len(floor_spots)),
+                            format_func=lambda i: (
+                                f"{floor_spots[i].room_name} ({floor_spots[i].spot_id})"
+                            ),
+                            key=f"tsk_loc_spot_pick_{task_id}",
+                        )
+                        # 사용자가 정정을 확정해야 적용 (실수 방지)
+                        if st.checkbox(
+                            "이 spot으로 위치 정정",
+                            key=f"tsk_loc_spot_apply_{task_id}",
+                        ):
+                            sel_spot = floor_spots[spot_idx]
+                            override_floor = sel_spot.floor
+                            override_zone = sel_spot.room_name
+                            override_label = (
+                                f"spot 정정 → {sel_spot.spot_id} "
+                                f"({sel_spot.floor}/{sel_spot.room_name})"
+                            )
+                    else:
+                        st.caption("이 층에 정의된 spot이 없습니다.")
+
+    if override_label:
+        st.markdown(
+            f"<div style='background:#FEF9C3; border:1px solid #FACC15; "
+            f"border-radius:8px; padding:0.5rem 0.75rem; color:#854D0E; "
+            f"font-size:0.85rem; margin:0.3rem 0;'>"
+            f"<b>위치 정정 적용 예정</b> · {override_label}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     c1, c2 = st.columns([1, 1])
     with c1:
         inspector = st.text_input(
@@ -540,9 +647,9 @@ def task_inspect_dialog(task_id: str) -> None:
         if photo_bytes:
             photo_path = data._upload_action_photo(new_def_id, photo_bytes)
 
-        # 사용 영역: floor/zone 은 장비 정보 또는 Task 정보 사용
-        floor = eq.floor if eq else t.floor
-        zone = eq.zone if eq else t.zone
+        # 사용 영역: 정정값이 있으면 그것을 우선, 아니면 장비/Task 정보 사용
+        floor = override_floor
+        zone = override_zone
         data.add_deficiency(data.Deficiency(
             deficiency_id=new_def_id,
             inspection_date=inspect_date,
