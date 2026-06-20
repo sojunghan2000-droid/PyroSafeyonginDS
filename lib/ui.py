@@ -64,10 +64,51 @@ THEME_CSS = """
         position: relative;
     }
     .ps-icon-btn:hover { background: #F1F5F9; color: #0F172A; }
+    .ps-icon-btn a { color: inherit; display: inline-flex;
+                     align-items: center; justify-content: center;
+                     width: 100%; height: 100%; }
     .ps-icon-btn .ps-dot {
         position: absolute; top: 8px; right: 9px;
         width: 8px; height: 8px; border-radius: 50%;
         background: #EF4444; border: 2px solid #FFFFFF;
+    }
+    .ps-icon-btn .ps-badge {
+        position: absolute; top: 2px; right: 0;
+        min-width: 18px; height: 18px;
+        padding: 0 5px;
+        border-radius: 9px;
+        background: #DC2626; color: #FFFFFF;
+        font-size: 0.68rem; font-weight: 700;
+        display: inline-flex; align-items: center; justify-content: center;
+        border: 2px solid #FFFFFF;
+        line-height: 1;
+    }
+
+    /* 상단바 알림 벨 — st.button을 상단바 우측에 fixed로 띄움 (아바타 메뉴 옆) */
+    .st-key-notify_btn {
+        position: fixed; top: 13px; right: 5.5rem;
+        z-index: 9001;
+        width: 38px;
+    }
+    .st-key-notify_btn button {
+        width: 38px; height: 38px; min-height: 38px;
+        border-radius: 50% !important;
+        background: transparent !important;
+        border: none !important;
+        color: #64748B !important;
+        padding: 0 !important;
+        font-size: 0.85rem !important;
+        font-weight: 700 !important;
+        line-height: 1 !important;
+    }
+    .st-key-notify_btn button:hover {
+        background: #F1F5F9 !important;
+        color: #0F172A !important;
+    }
+    /* 1+ 카운트 표시 시 빨강 강조 (body 클래스 기반 토글) */
+    body.ps-has-alerts .st-key-notify_btn button {
+        color: #DC2626 !important;
+        font-weight: 700 !important;
     }
     /* 아바타 메뉴 — st.popover를 상단바 우측에 고정 배치 */
     .st-key-avatar_menu {
@@ -405,20 +446,24 @@ def apply_theme() -> None:
     st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 
+def _notify_count() -> tuple[int, int]:
+    """알림 카운트 = 조치 대기 통보서 + 지연 태스크.
+    데이터 로드 실패 시 (0,0)."""
+    try:
+        from lib import data  # 함수 내부 import: 순환 의존 회피
+        pending = sum(1 for n in data.load_notices() if not n.action_done)
+        overdue = sum(1 for t in data.load_tasks() if t.status == "Overdue")
+        return pending, overdue
+    except Exception:
+        return 0, 0
+
+
 def render_topbar(active_page: str = "dashboard") -> None:
     html = """
 <div class="ps-topbar">
     <div class="ps-topbar-brand">Samsung C&amp;T</div>
     <div class="ps-topbar-spacer"></div>
     <div class="ps-topbar-actions">
-        <div class="ps-icon-btn" title="Notifications">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-            </svg>
-            <span class="ps-dot"></span>
-        </div>
         <div class="ps-icon-btn" title="Help">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -431,7 +476,30 @@ def render_topbar(active_page: str = "dashboard") -> None:
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
+    _render_notify_button()
     _render_avatar_menu()
+
+
+def _render_notify_button() -> None:
+    """상단바 알림 벨 — st.button을 fixed position으로 띄움.
+    실데이터 기반(조치 대기 통보서 + 지연 태스크) 카운트 표시.
+    클릭 시 지적·오동작 관리(조치 대기 필터)로 이동."""
+    pending, overdue = _notify_count()
+    total = pending + overdue
+    if total == 0:
+        label = "🔔"
+        title = "알림 없음"
+    else:
+        label = f"🔔 {total if total <= 99 else '99+'}"
+        title = f"조치 대기 {pending}건 · 지연 태스크 {overdue}건"
+
+    if st.button(label, key="notify_btn", help=title):
+        st.session_state["page"] = "deficiencies"
+        st.session_state["unified_type"] = "조치 대기만"
+        st.rerun()
+
+    # 카운트가 1+일 때만 빨강 강조 클래스 토글
+    _toggle_body_class("ps-has-alerts", total > 0)
 
 
 def _render_avatar_menu() -> None:

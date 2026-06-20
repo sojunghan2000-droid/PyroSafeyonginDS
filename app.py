@@ -50,6 +50,7 @@ if eq_param and st.session_state.get("_last_eq_param") != eq_param:
     st.session_state["_open_inspect_dialog"] = True
     st.session_state["_last_eq_param"] = eq_param
 
+
 render_topbar(st.session_state["page"])
 active = render_sidebar(st.session_state["page"])
 
