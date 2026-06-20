@@ -65,9 +65,12 @@ def control_toggle(key: str, default_locked: bool = False) -> bool:
 
 
 def plotly_config(locked: bool = False) -> dict:
-    """공통 Plotly config. locked=True면 정적 모드(인터랙션 비활성 + modebar 숨김)."""
-    if locked:
-        return {"staticPlot": True, "displayModeBar": False}
+    """공통 Plotly config — 항상 동일. locked 인자는 호환을 위해 받지만 무시.
+
+    plotly_chart의 config가 변하면 streamlit이 컴포넌트를 재마운트하여
+    Plotly의 uirevision 효과(줌/팬 보존)가 무력화된다. 따라서 잠금은 config가 아닌
+    CSS overlay(pointer-events:none + modebar 숨김)로 구현 — lock_overlay_css() 참조.
+    """
     return {
         "scrollZoom": True,
         "displayModeBar": True,
@@ -75,6 +78,42 @@ def plotly_config(locked: bool = False) -> dict:
         "modeBarButtonsToRemove": [
             "select2d", "lasso2d", "autoScale2d", "toggleSpikelines",
         ],
-        # resetScale2d (🏠 Home) = "전체 도면 viewport에 fit" 으로 사용자가 인지하는 '전체화면 보기'
-        # 기본 포함이므로 별도 add 불필요.
+        # resetScale2d (🏠 Home) = "전체 도면 viewport에 fit"
     }
+
+
+def lock_overlay_css() -> None:
+    """잠금 시 호출 — 같은 스코프(페이지/dialog) 내 stPlotlyChart에
+    pointer-events:none + modebar 숨김 + 잠금 배지를 주입한다.
+
+    config / on_select / selection_mode 등 plotly_chart props가 변하지 않아
+    Plotly 인스턴스가 재마운트되지 않고 줌/팬 상태가 그대로 유지된다.
+    """
+    st.markdown(
+        """
+        <style id="floor_lock_overlay">
+        div[data-testid="stPlotlyChart"] {
+            position: relative;
+            pointer-events: none !important;
+        }
+        div[data-testid="stPlotlyChart"]::after {
+            content: "🔒 잠금";
+            position: absolute;
+            top: 10px; right: 10px;
+            background: rgba(15, 23, 42, 0.78);
+            color: #FFFFFF;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            z-index: 50;
+            pointer-events: none;
+        }
+        div[data-testid="stPlotlyChart"] .modebar,
+        div[data-testid="stPlotlyChart"] .modebar-container {
+            display: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )

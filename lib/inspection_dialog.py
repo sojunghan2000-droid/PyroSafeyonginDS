@@ -315,14 +315,17 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
 
     event = st.plotly_chart(
         fig, use_container_width=True,
-        config=plotly_config(locked=locked),
-        on_select="rerun" if not locked else "ignore",
-        selection_mode=["points"] if not locked else [],
+        config=plotly_config(),
+        on_select="rerun",
+        selection_mode=["points"],
         key=f"add_tsk_map_chart_{round_id}_{floor}",
     )
+    if locked:
+        from lib.floor_widget import lock_overlay_css
+        lock_overlay_css()
 
-    # 클릭 → 해당 좌표의 후보 장비 1건 선택
-    if (event and getattr(event, "selection", None)
+    # 클릭 → 해당 좌표의 후보 장비 1건 선택 (잠금 시 무시)
+    if (not locked and event and getattr(event, "selection", None)
             and getattr(event.selection, "points", None)):
         pt = event.selection.points[-1]
         cd = pt.get("customdata")
