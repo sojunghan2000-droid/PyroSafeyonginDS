@@ -263,6 +263,28 @@ THEME_CSS = """
     .kpi-hint { font-size: 0.82rem; color: #64748B; margin-top: 0.4rem; }
     .kpi-trend-up { color: #16A34A; font-weight: 600; }
 
+    /* KPI 한 줄 가로 슬라이드 — 모바일에서 카드가 wrap 되지 않고 좌우 스크롤 */
+    .kpi-row-scroll {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 0.6rem;
+        overflow-x: auto;
+        padding: 0 0.1rem 0.5rem;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+    }
+    .kpi-row-scroll .kpi-card {
+        flex: 1 0 0;
+        min-width: 160px;
+        scroll-snap-align: start;
+    }
+    @media (max-width: 768px) {
+        .kpi-row-scroll .kpi-card {
+            flex: 0 0 75%;
+        }
+    }
+
     /* === Status badges === */
     .badge {
         display: inline-flex; align-items: center;
@@ -547,8 +569,19 @@ def kpi_card(label: str, value: str, hint: str = "", variant: str = "default") -
     )
 
 
-def render_kpi_row(cards: list[tuple[str, str, str, str]]) -> None:
-    """cards: list of (label, value, hint, variant)"""
+def render_kpi_row(cards: list[tuple[str, str, str, str]],
+                   scrollable: bool = False) -> None:
+    """cards: list of (label, value, hint, variant).
+    scrollable=True 면 flex nowrap + overflow-x auto 컨테이너로 렌더 (모바일 좌우 슬라이드)."""
+    if scrollable:
+        # st.columns 대신 단일 HTML 블록으로 출력해야 flex 컨테이너가 살아남는다.
+        html = ['<div class="kpi-row-scroll">']
+        for label, value, hint, variant in cards:
+            html.append(kpi_card(label, value, hint, variant))
+        html.append('</div>')
+        st.markdown("".join(html), unsafe_allow_html=True)
+        return
+
     cols = st.columns(len(cards))
     for col, (label, value, hint, variant) in zip(cols, cards):
         with col:

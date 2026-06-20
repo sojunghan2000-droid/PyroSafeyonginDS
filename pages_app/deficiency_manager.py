@@ -158,13 +158,17 @@ def render() -> None:
     cnt_notice = len(notices)
     cnt_pending = sum(1 for r in all_rows if r.status == "조치 대기")
 
+    action_rate = data.notice_action_rate()
     render_kpi_row([
         ("전체 항목", f"{len(all_rows)}", f"지적 {cnt_def} · 오동작 {cnt_mal}", "default"),
         ("지적사항", f"{cnt_def}", "별지5", "default"),
         ("통보서 발급", f"{cnt_notice}", f"조치 대기 {cnt_pending}",
          "alert" if cnt_pending else "default"),
         ("오동작", f"{cnt_mal}", "별지9", "default"),
-    ])
+        ("작업 조치율",
+         f"{action_rate:.1f}%" if action_rate is not None else "—",
+         "조치 완료 / 발급 통보서", "default"),
+    ], scrollable=True)
 
     # 필터
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
