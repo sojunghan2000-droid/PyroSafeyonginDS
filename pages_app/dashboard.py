@@ -41,7 +41,7 @@ def _summary_tab() -> None:
         ("작업 조치율", f"{action_rate:.1f}%" if action_rate is not None else "—",
          "조치 완료 / 발급 통보서", "default"),
         ("QR 적용률", f"{qr_coverage:.1f}%", qr_hint, qr_variant),
-    ])
+    ], scrollable=True)
 
     st.markdown("<div style='height:0.6rem;'></div>", unsafe_allow_html=True)
 
