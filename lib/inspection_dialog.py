@@ -199,8 +199,153 @@ def new_inspection_dialog() -> None:
 
 
 @st.dialog("회차에 Task 추가", width="large")
+def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
+    """[+ Task 추가] 모달의 도면 선택 탭. 회차 매칭 장비 마커 + 단일 클릭 선택.
+    candidates: 회차 매칭 후보 장비 (미포함만). all_eq: 전체 장비.
+    already_locs: 이미 회차에 포함된 location_id 집합.
+    선택된 장비 반환 (없으면 None).
+    """
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import (
+        control_toggle, floor_legend_html, plotly_config,
+    )
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+
+    # 후보 장비가 있는 층 모음
+    cand_floors = sorted({c.floor for c in candidates if c.floor})
+    if not cand_floors:
+        st.info("매칭 후보 장비에 층 정보가 없어 도면 선택을 사용할 수 없습니다.")
+        return None
+
+    floor = st.selectbox(
+        "층", options=cand_floors,
+        key=f"add_tsk_map_floor_{round_id}",
+    )
+
+    # 컨트롤 토글 + 범례
+    cc, lc = st.columns([1.2, 5])
+    with cc:
+        locked = control_toggle(f"add_tsk_map_{round_id}", default_locked=False)
+    with lc:
+        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.warning(f"{floor} 도면 이미지가 없습니다.")
+        return None
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    # 후보 장비 (도면 매칭 가능 = floor 일치 + 좌표 있음) — 파란 마커
+    floor_cands = [c for c in candidates if c.floor == floor]
+    if floor_cands:
+        spots = {s.spot_id: s for s in data.load_spots(floor)}
+        xs, ys, txts, custom = [], [], [], []
+        for c in floor_cands:
+            sp = spots.get(c.spot_id) if c.spot_id else None
+            if not sp:
+                continue  # 좌표 없는 장비는 표시 불가
+            xs.append(sp.x_pct / 100 * FIG_W)
+            ys.append(FIG_H - sp.y_pct / 100 * FIG_H)
+            txts.append(c.equipment_id.split("-")[-1])
+            custom.append((c.equipment_id, c.equipment_name, c.location_id))
+        if xs:
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys, mode="markers+text",
+                text=txts, textposition="top center",
+                textfont=dict(size=10, color="#0F172A"),
+                marker=dict(size=18, color="#2563EB",
+                            line=dict(color="#FFFFFF", width=2)),
+                customdata=custom,
+                hovertemplate=(
+                    "<b>%{customdata[1]}</b><br>"
+                    "%{customdata[2]} · %{customdata[0]}<extra></extra>"
+                ),
+                name="후보 장비", showlegend=False,
+            ))
+
+    # 이미 포함된 장비 (회색 비활성 마커)
+    floor_already = [
+        e for e in all_eq
+        if e.floor == floor and e.location_id in already_locs
+    ]
+    if floor_already:
+        spots = {s.spot_id: s for s in data.load_spots(floor)}
+        xs, ys, custom = [], [], []
+        for e in floor_already:
+            sp = spots.get(e.spot_id) if e.spot_id else None
+            if not sp:
+                continue
+            xs.append(sp.x_pct / 100 * FIG_W)
+            ys.append(FIG_H - sp.y_pct / 100 * FIG_H)
+            custom.append((e.equipment_id, e.equipment_name, e.location_id))
+        if xs:
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys, mode="markers",
+                marker=dict(size=14, color="#94A3B8",
+                            line=dict(color="#FFFFFF", width=1.5)),
+                customdata=custom,
+                hovertemplate=(
+                    "<b>%{customdata[1]}</b> (이미 포함)<br>"
+                    "%{customdata[2]} · %{customdata[0]}<extra></extra>"
+                ),
+                name="이미 포함", showlegend=False,
+                hoverinfo="text",
+            ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="#F8FAFC", height=520,
+        dragmode="pan", showlegend=False,
+        clickmode="event+select",
+    )
+
+    event = st.plotly_chart(
+        fig, use_container_width=True,
+        config=plotly_config(locked=locked),
+        on_select="rerun" if not locked else "ignore",
+        selection_mode=["points"] if not locked else [],
+        key=f"add_tsk_map_chart_{round_id}_{floor}",
+    )
+
+    # 클릭 → 해당 좌표의 후보 장비 1건 선택
+    if (event and getattr(event, "selection", None)
+            and getattr(event.selection, "points", None)):
+        pt = event.selection.points[-1]
+        cd = pt.get("customdata")
+        if cd:
+            eq_id = cd[0]
+            picked = next((c for c in candidates if c.equipment_id == eq_id), None)
+            if picked:
+                st.success(
+                    f"선택: **{picked.equipment_id}** · {picked.equipment_name} "
+                    f"({picked.location_id})"
+                )
+                return picked
+            # 회색(이미 포함) 마커 클릭한 경우
+            st.warning(f"{eq_id}는 이미 회차에 포함된 장비입니다.")
+    st.caption(
+        "도면 위 파란색 마커를 탭하면 그 장비가 선택됩니다. "
+        "회색 마커는 이미 회차에 포함된 장비."
+    )
+    return None
+
+
 def add_task_to_round_dialog(round_id: str) -> None:
-    """v1.5 자유 점검 회차에 Task 1건 동적 추가. 직접 선택 / QR 스캔 2가지 진입."""
+    """v1.5 자유 점검 회차에 Task 1건 동적 추가.
+    진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 3가지."""
     r = data.get_round(round_id)
     if not r:
         st.error("회차를 찾을 수 없습니다.")
@@ -237,8 +382,8 @@ def add_task_to_round_dialog(round_id: str) -> None:
         )
         return
 
-    # 진입 방식 — 직접 선택 / QR 스캔 (모바일 친화)
-    tab_pick, tab_qr = st.tabs(["직접 선택", "QR 스캔"])
+    # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 (모바일 친화)
+    tab_pick, tab_qr, tab_map = st.tabs(["직접 선택", "QR 스캔", "📍 도면 선택"])
     sel_eq = None
     with tab_pick:
         eq_idx = st.selectbox(
@@ -300,6 +445,13 @@ def add_task_to_round_dialog(round_id: str) -> None:
                     )
                 else:
                     st.error(f"장비를 찾을 수 없습니다: {eq_id}")
+
+    with tab_map:
+        picked = _add_task_map_picker(
+            round_id, candidates, all_eq, already_locs,
+        )
+        if picked is not None:
+            sel_eq = picked
 
     note = st.text_input(
         "메모(선택)",
