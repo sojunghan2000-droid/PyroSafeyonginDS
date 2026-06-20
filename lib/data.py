@@ -385,6 +385,22 @@ def update_spot(s: Spot) -> None:
     _spot_rows.clear()
 
 
+def update_spot_with_equipment_sync(s: Spot) -> int:
+    """spot 갱신 + 이 spot에 매핑된 모든 장비의 pixel_x/y/zone 동기화.
+    반환값은 동기화된 장비 행 수."""
+    _db().table("floor_spots").update({
+        "floor": s.floor, "room_name": s.room_name,
+        "notes": s.notes, "x_pct": s.x_pct, "y_pct": s.y_pct,
+    }).eq("spot_id", s.spot_id).execute()
+    res = _db().table("equipment").update({
+        "pixel_x": s.x_pct, "pixel_y": s.y_pct,
+        "zone": s.room_name,
+    }).eq("spot_id", s.spot_id).execute()
+    _spot_rows.clear()
+    _equipment_rows.clear()
+    return len(res.data or [])
+
+
 def delete_spot(spot_id: str) -> None:
     """spot 삭제. 이 spot을 참조하던 장비는 spot_id가 NULL로 풀린다 (FK 미설정).
     호출 전 사용 중 여부를 확인해서 사용자에게 경고할 책임은 호출부에 있다."""

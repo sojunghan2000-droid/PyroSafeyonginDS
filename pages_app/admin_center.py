@@ -216,9 +216,11 @@ def _spot_master_tab() -> None:
         return
 
     used = {e.spot_id for e in data.load_equipment() if e.spot_id}
-    cols_ratio = [1.3, 2.2, 1.6, 1.0, 0.7, 0.7]
+    # 컬럼 7개: ID / 방이름 / 비고 / 좌표 / 사용 / [속성변경] / [삭제]
+    cols_ratio = [1.3, 1.9, 1.4, 0.9, 0.7, 0.9, 0.7]
     header = st.columns(cols_ratio)
-    for col, txt in zip(header, ["spot ID", "방이름", "비고", "좌표(%)", "사용", ""]):
+    for col, txt in zip(header,
+                        ["spot ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
         col.markdown(
             f"<div style='color:#64748B; font-size:0.78rem; font-weight:600;'>{txt}</div>",
             unsafe_allow_html=True,
@@ -226,9 +228,14 @@ def _spot_master_tab() -> None:
     st.markdown("<hr style='margin:0.3rem 0; border-color:#E2E8F0;'>",
                 unsafe_allow_html=True)
 
+    # 인라인 편집으로 열린 spot 1개 추적 (한 번에 한 행만 펼침)
+    open_spot_key = "admin_spot_edit_open"
+    open_spot_id = st.session_state.get(open_spot_key)
+
     for s in spots:
         row = st.columns(cols_ratio, vertical_alignment="center")
         in_use = s.spot_id in used
+        is_open = open_spot_id == s.spot_id
         row[0].markdown(
             f"<span style='font-weight:600; color:#0F172A;'>{s.spot_id}</span>",
             unsafe_allow_html=True,
@@ -251,10 +258,114 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
         with row[5]:
+            btn_label = "닫기" if is_open else "속성 변경"
+            if st.button(btn_label, key=f"admin_spot_edit_{s.spot_id}",
+                         use_container_width=True,
+                         type="primary" if is_open else "secondary"):
+                # 다른 행이 열려 있으면 닫고, 같은 행 클릭이면 토글
+                st.session_state[open_spot_key] = (
+                    None if is_open else s.spot_id
+                )
+                # 폼 키 초기화 (이전 spot의 값이 남아있지 않도록)
+                for k in ("edit_room_name", "edit_notes",
+                          "edit_x_pct", "edit_y_pct"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+        with row[6]:
             if st.button("삭제", key=f"admin_spot_del_{s.spot_id}",
                          use_container_width=True, disabled=in_use):
                 data.delete_spot(s.spot_id)
                 st.rerun()
+
+        # 인라인 편집 영역 — 펼침
+        if is_open:
+            with st.container(border=True):
+                st.markdown(
+                    f"<div style='color:#475569; font-size:0.85rem; "
+                    f"margin-bottom:0.4rem;'>"
+                    f"<b style='color:#0F172A;'>{s.spot_id}</b> 속성 변경 "
+                    f"<span style='color:#94A3B8;'>· 층 <b>{s.floor}</b> "
+                    f"(spot_id/층은 변경 불가)</span></div>",
+                    unsafe_allow_html=True,
+                )
+                if in_use:
+                    st.caption(
+                        "이 spot은 장비에 매핑되어 있습니다. "
+                        "방이름·좌표 변경 시 해당 장비의 위치 정보도 함께 갱신됩니다."
+                    )
+                ec1, ec2 = st.columns([1, 2])
+                with ec1:
+                    new_room = st.text_input(
+                        "방이름",
+                        value=s.room_name,
+                        key="edit_room_name",
+                    )
+                with ec2:
+                    new_notes = st.text_input(
+                        "비고",
+                        value=s.notes,
+                        key="edit_notes",
+                    )
+                ec3, ec4, _ = st.columns([1, 1, 2])
+                with ec3:
+                    new_x = st.number_input(
+                        "x_pct (도면 폭 %)",
+                        min_value=0.0, max_value=100.0,
+                        value=float(s.x_pct), step=0.5, format="%.2f",
+                        key="edit_x_pct",
+                    )
+                with ec4:
+                    new_y = st.number_input(
+                        "y_pct (도면 높이 %)",
+                        min_value=0.0, max_value=100.0,
+                        value=float(s.y_pct), step=0.5, format="%.2f",
+                        key="edit_y_pct",
+                    )
+
+                # 변경 여부 표시
+                changed = (
+                    new_room.strip() != s.room_name
+                    or new_notes.strip() != s.notes
+                    or round(new_x, 2) != round(s.x_pct, 2)
+                    or round(new_y, 2) != round(s.y_pct, 2)
+                )
+
+                bc1, bc2 = st.columns([1, 1])
+                with bc1:
+                    if st.button(
+                        "저장",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"admin_spot_save_{s.spot_id}",
+                        disabled=not changed or not new_room.strip(),
+                    ):
+                        n_synced = data.update_spot_with_equipment_sync(
+                            data.Spot(
+                                spot_id=s.spot_id, floor=s.floor,
+                                room_name=new_room.strip(),
+                                notes=new_notes.strip(),
+                                x_pct=float(new_x), y_pct=float(new_y),
+                            )
+                        )
+                        st.session_state[open_spot_key] = None
+                        msg = f"{s.spot_id} 속성 저장 완료."
+                        if n_synced:
+                            msg += f" 매핑 장비 {n_synced}건의 위치 정보도 동기화."
+                        st.session_state["admin_spot_save_msg"] = msg
+                        st.rerun()
+                with bc2:
+                    if st.button(
+                        "취소",
+                        use_container_width=True,
+                        key=f"admin_spot_cancel_{s.spot_id}",
+                    ):
+                        st.session_state[open_spot_key] = None
+                        st.rerun()
+
+    # 저장 후 토스트
+    msg = st.session_state.pop("admin_spot_save_msg", None)
+    if msg:
+        st.success(msg)
 
 
 def render() -> None:
