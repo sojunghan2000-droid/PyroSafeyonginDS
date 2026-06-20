@@ -51,13 +51,20 @@ def control_toggle(key: str, default_locked: bool = False) -> bool:
     if state_key not in st.session_state:
         st.session_state[state_key] = default_locked
     locked = st.session_state[state_key]
-    label = "🔒 도면 잠금" if locked else "🔓 도면 조작"
+    # 라벨은 "클릭하면 무엇이 될지(결과형)" — 현재 상태가 아닌 다음 액션을 안내
+    # · locked=False(조작 중) → "🔒 잠금"  (이 버튼 누르면 잠금됨)
+    # · locked=True(잠금 중) → "🔓 잠금 해제" (이 버튼 누르면 해제됨)
+    label = "🔓 잠금 해제" if locked else "🔒 잠금"
+    help_txt = (
+        "현재 잠금 — pan/zoom 비활성, modebar 숨김. 클릭하면 조작 가능 상태로"
+        if locked else
+        "현재 조작 가능 — 휠/드래그로 줌·팬. 클릭하면 잠금"
+    )
     if st.button(
         label,
         key=f"floor_lock_btn_{key}",
-        help=("잠금 상태 — pan/zoom 비활성. 클릭하면 조작 모드"
-              if locked else
-              "조작 가능 — 휠/드래그로 줌·팬. 클릭하면 잠금 모드"),
+        help=help_txt,
+        type="primary" if locked else "secondary",
     ):
         locked = not locked
         st.session_state[state_key] = locked
