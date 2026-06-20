@@ -13,6 +13,7 @@ import streamlit as st
 
 from lib import auth, data
 from lib.data import Spot
+from lib.floor_widget import control_toggle, floor_legend_html, plotly_config
 from lib.ui import badge, page_header
 
 # 새 8개 층 (대시보드 Location 탭과 동일 순서)
@@ -88,11 +89,13 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
     return fig
 
 
-def _spot_master_tab() -> None:
+@st.dialog("신규 spot 정의", width="large")
+def _spot_define_dialog() -> None:
+    """도면 클릭으로 좌표 픽업 + 속성 입력 + 저장. 위치 마스터 페이지에서 진입."""
     st.markdown(
-        "<div style='color:#64748B; font-size:0.92rem; margin-bottom:0.4rem;'>"
-        "도면 위 빈 곳을 클릭해 신규 위치(spot)를 정의합니다. "
-        "기존 spot은 주황색 점으로 표시됩니다. 클릭한 좌표가 폼에 자동 입력됩니다."
+        "<div style='color:#64748B; font-size:0.9rem; margin-bottom:0.5rem;'>"
+        "층 선택 → 도면 위 빈 곳을 클릭하면 좌표가 자동 입력됩니다. "
+        "기존 spot(주황색 점)과의 위치 관계를 보고 결정하세요."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -100,7 +103,7 @@ def _spot_master_tab() -> None:
     floor = st.selectbox(
         "층 선택",
         options=ADMIN_FLOORS,
-        key="admin_spot_floor",
+        key="admin_spot_dlg_floor",
     )
     spots = data.load_spots(floor)
 
@@ -112,83 +115,83 @@ def _spot_master_tab() -> None:
         )
         return
 
+    # 도면 상단 컨트롤 토글 + 범례
+    ctrl_col, leg_col = st.columns([1.2, 5])
+    with ctrl_col:
+        locked = control_toggle(f"admin_dlg_{floor}", default_locked=False)
+    with leg_col:
+        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+
     event = st.plotly_chart(
         fig,
         use_container_width=True,
-        config={
-            "scrollZoom": True,
-            "displayModeBar": True,
-            "displaylogo": False,
-            "modeBarButtonsToRemove": [
-                "select2d", "lasso2d", "autoScale2d", "toggleSpikelines",
-            ],
-        },
-        on_select="rerun",
-        selection_mode=["points"],
-        key=f"admin_floor_chart_{floor}",
+        config=plotly_config(locked=locked),
+        on_select="rerun" if not locked else "ignore",
+        selection_mode=["points"] if not locked else [],
+        key=f"admin_dlg_chart_{floor}",
     )
 
-    picked_x = picked_y = None
     if (event and getattr(event, "selection", None)
             and getattr(event.selection, "points", None)):
-        # 마지막 클릭 좌표 — 도면 픽셀 → % 환산
         pt = event.selection.points[-1]
-        px, py = pt["x"], pt["y"]
-        picked_x = round(px / FIG_W * 100, 2)
-        picked_y = round((FIG_H - py) / FIG_H * 100, 2)
-        # 폼 키에 반영
-        st.session_state["admin_spot_x"] = picked_x
-        st.session_state["admin_spot_y"] = picked_y
+        st.session_state["admin_spot_x"] = round(pt["x"] / FIG_W * 100, 2)
+        st.session_state["admin_spot_y"] = round((FIG_H - pt["y"]) / FIG_H * 100, 2)
 
     st.markdown(
-        "<div style='color:#94A3B8; font-size:0.8rem; margin-top:-0.5rem;'>"
-        "휠/핀치 줌 · 드래그 팬 · 도면 어디든 클릭하면 좌표 픽업 (그리드 단위로 스냅)"
+        "<div style='color:#94A3B8; font-size:0.78rem; margin-top:-0.4rem;'>"
+        "휠/핀치 줌 · 드래그 팬 · 잠금 시 인터랙션 비활성 · 도면 클릭 시 좌표 픽업"
         "</div>",
         unsafe_allow_html=True,
     )
 
-    st.markdown("<div style='height:0.8rem;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
-    # --- 신규 spot 폼 ---
-    with st.expander("신규 spot 정의", expanded=True):
-        c1, c2, c3 = st.columns([1, 1, 1])
-        with c1:
-            x_pct = st.number_input(
-                "x_pct (도면 폭 %)",
-                min_value=0.0, max_value=100.0,
-                value=float(st.session_state.get("admin_spot_x", 50.0)),
-                step=0.5, format="%.2f",
-                key="admin_spot_x_input",
-            )
-        with c2:
-            y_pct = st.number_input(
-                "y_pct (도면 높이 %)",
-                min_value=0.0, max_value=100.0,
-                value=float(st.session_state.get("admin_spot_y", 50.0)),
-                step=0.5, format="%.2f",
-                key="admin_spot_y_input",
-            )
-        with c3:
-            st.markdown(
-                "<div style='padding-top:1.7rem; color:#64748B; font-size:0.85rem;'>"
-                f"다음 spot ID: <b>{data.next_spot_id(floor)}</b>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-        room_name = st.text_input(
-            "방이름 *",
-            key="admin_spot_room",
-            placeholder="예: 로비 동쪽 출입구 좌측",
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        x_pct = st.number_input(
+            "x_pct (도면 폭 %)",
+            min_value=0.0, max_value=100.0,
+            value=float(st.session_state.get("admin_spot_x", 50.0)),
+            step=0.5, format="%.2f",
+            key="admin_spot_x_input",
         )
-        notes = st.text_input(
-            "비고",
-            key="admin_spot_notes",
-            placeholder="예: 소화기 권장 / 감지기 함께 설치 등",
+    with c2:
+        y_pct = st.number_input(
+            "y_pct (도면 높이 %)",
+            min_value=0.0, max_value=100.0,
+            value=float(st.session_state.get("admin_spot_y", 50.0)),
+            step=0.5, format="%.2f",
+            key="admin_spot_y_input",
+        )
+    with c3:
+        st.markdown(
+            "<div style='padding-top:1.7rem; color:#64748B; font-size:0.85rem;'>"
+            f"다음 spot ID: <b>{data.next_spot_id(floor)}</b>"
+            "</div>",
+            unsafe_allow_html=True,
         )
 
+    room_name = st.text_input(
+        "방이름 *",
+        key="admin_spot_room",
+        placeholder="예: 로비 동쪽 출입구 좌측",
+    )
+    notes = st.text_input(
+        "비고",
+        key="admin_spot_notes",
+        placeholder="예: 소화기 권장 / 감지기 함께 설치 등",
+    )
+
+    bcol1, bcol2 = st.columns([1, 1])
+    with bcol1:
+        if st.button("취소", use_container_width=True, key="admin_spot_dlg_cancel"):
+            for k in ("admin_spot_room", "admin_spot_notes",
+                      "admin_spot_x", "admin_spot_y"):
+                st.session_state.pop(k, None)
+            st.rerun()
+    with bcol2:
         if st.button("spot 추가", type="primary", use_container_width=True,
-                     key="admin_spot_submit"):
+                     key="admin_spot_dlg_submit"):
             if not room_name.strip():
                 st.error("방이름을 입력해 주세요.")
             else:
@@ -198,12 +201,43 @@ def _spot_master_tab() -> None:
                     room_name=room_name.strip(), notes=notes.strip(),
                     x_pct=x_pct, y_pct=y_pct,
                 ))
-                # 폼 초기화
                 for k in ("admin_spot_room", "admin_spot_notes",
                           "admin_spot_x", "admin_spot_y"):
                     st.session_state.pop(k, None)
-                st.success(f"{new_id} 등록 완료 ({room_name.strip()}).")
+                st.session_state["admin_spot_just_added"] = (
+                    f"{new_id} 등록 완료 ({room_name.strip()})."
+                )
                 st.rerun()
+
+
+def _spot_master_tab() -> None:
+    # 상단 헤더 + [+ 신규 spot] 버튼
+    head_l, head_r = st.columns([3, 1])
+    with head_l:
+        st.markdown(
+            "<div style='color:#64748B; font-size:0.92rem;'>"
+            "층별 위치(spot)를 정의·관리합니다. 신규 정의는 우측 버튼에서 모달로 진행."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with head_r:
+        if st.button("+ 신규 spot 정의", type="primary",
+                     use_container_width=True, key="admin_spot_open_dlg"):
+            for k in ("admin_spot_room", "admin_spot_notes",
+                      "admin_spot_x", "admin_spot_y"):
+                st.session_state.pop(k, None)
+            _spot_define_dialog()
+
+    just_added = st.session_state.pop("admin_spot_just_added", None)
+    if just_added:
+        st.success(just_added)
+
+    floor = st.selectbox(
+        "층 선택",
+        options=ADMIN_FLOORS,
+        key="admin_spot_floor",
+    )
+    spots = data.load_spots(floor)
 
     # --- 이 층의 spot 목록 + 편집/삭제 ---
     st.markdown(

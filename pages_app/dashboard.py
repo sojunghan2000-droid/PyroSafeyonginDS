@@ -258,22 +258,23 @@ def _floor_detail_dialog(floor: str) -> None:
             f"`scripts/convert_floor_pdfs.py`를 실행해 도면을 생성해 주세요."
         )
     else:
+        from lib.floor_widget import (
+            control_toggle, floor_legend_html, plotly_config,
+        )
+        ctrl_col, leg_col = st.columns([1.2, 5])
+        with ctrl_col:
+            locked = control_toggle(f"floor_plan_{floor}", default_locked=False)
+        with leg_col:
+            st.markdown(floor_legend_html(), unsafe_allow_html=True)
         st.plotly_chart(
             fig, use_container_width=True,
-            config={
-                "scrollZoom": True,
-                "displayModeBar": True,
-                "displaylogo": False,
-                "modeBarButtonsToRemove": [
-                    "select2d", "lasso2d", "autoScale2d", "toggleSpikelines",
-                ],
-            },
+            config=plotly_config(locked=locked),
             key=f"floor_plan_{floor}",
         )
         st.markdown(
             "<div style='color:#64748B; font-size:0.78rem; margin-top:-0.5rem;'>"
-            "휠/핀치 줌 · 드래그 팬 · 홈 아이콘 초기화 · "
-            "● 빨강 FAIL · ● 파랑 DUE · ● 초록 PASS · ● 회색 빈 위치"
+            "휠/핀치 줌 · 드래그 팬 · 🏠 아이콘으로 전체 도면 보기 · "
+            "잠금 시 인터랙션 비활성"
             "</div>",
             unsafe_allow_html=True,
         )

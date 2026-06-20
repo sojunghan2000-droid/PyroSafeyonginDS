@@ -32,6 +32,16 @@ THEME_CSS = """
     header[data-testid="stHeader"] { display: none !important; }
     div[data-testid="stToolbar"] { display: none !important; }
 
+    /* Streamlit element의 "View fullscreen" (브라우저 전체화면) 버튼 숨김.
+       도면 컨텍스트 손실 + Plotly Home 아이콘이 더 적합한 '전체 보기' 역할.
+       (PRD R12 도면 UX) */
+    button[title="View fullscreen"],
+    button[title="Exit fullscreen"],
+    button[kind="elementToolbarButton"][aria-label*="fullscreen" i] {
+        display: none !important;
+    }
+    div[data-testid="stElementToolbar"] { display: none !important; }
+
     /* === Top Header Bar === */
     .ps-topbar {
         position: fixed; top: 0; left: 0; right: 0;
