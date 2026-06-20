@@ -89,15 +89,15 @@ THEME_CSS = """
     .st-key-notify_btn {
         position: fixed; top: 13px; right: 5.5rem;
         z-index: 9001;
-        width: 38px;
+        width: 52px;
     }
     .st-key-notify_btn button {
-        width: 38px; height: 38px; min-height: 38px;
-        border-radius: 50% !important;
+        width: 52px; height: 38px; min-height: 38px;
+        border-radius: 999px !important;
         background: transparent !important;
         border: none !important;
         color: #64748B !important;
-        padding: 0 !important;
+        padding: 0 0.5rem !important;
         font-size: 0.85rem !important;
         font-weight: 700 !important;
         line-height: 1 !important;
@@ -105,6 +105,10 @@ THEME_CSS = """
     .st-key-notify_btn button:hover {
         background: #F1F5F9 !important;
         color: #0F172A !important;
+    }
+    /* st.popover trigger의 chevron(expand_more) 숨김 — 알림 벨에는 불필요 */
+    .st-key-notify_btn button div[aria-hidden="true"] {
+        display: none !important;
     }
     /* 1+ 카운트 표시 시 빨강 강조 (body 클래스 기반 토글) */
     body.ps-has-alerts .st-key-notify_btn button {
@@ -179,8 +183,9 @@ THEME_CSS = """
         justify-content: center;
     }
     .st-key-avatar_menu button[data-testid="stPopoverButton"] svg,
-    .st-key-avatar_menu button[data-testid="stPopoverButton"] [data-testid="stIconMaterial"] {
-        display: none;
+    .st-key-avatar_menu button[data-testid="stPopoverButton"] [data-testid="stIconMaterial"],
+    .st-key-avatar_menu button[data-testid="stPopoverButton"] div[aria-hidden="true"] {
+        display: none !important;
     }
     /* 사이드바를 topbar 아래로 밀어내기 */
     section[data-testid="stSidebar"] { margin-top: 64px; }
