@@ -758,7 +758,7 @@ def render_sidebar(active: str) -> str:
         # 번호 prefix nav
         selected = active
         for idx, (key, label) in enumerate(NAV_PAGES, start=1):
-            btn_label = f"{idx}." if mini else f"{idx}. {label}"
+            btn_label = f"{idx}" if mini else f"{idx}. {label}"
             is_active = key == active
             btn_type = "primary" if is_active else "secondary"
             if st.button(btn_label, key=f"nav_{key}", type=btn_type, use_container_width=True):
@@ -774,7 +774,7 @@ def render_sidebar(active: str) -> str:
             st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
             header_key, header_label = NAV_ADMIN_HEADER
             is_active_header = header_key == active
-            header_btn_label = "A." if mini else f"A. {header_label}"
+            header_btn_label = "A" if mini else f"A. {header_label}"
             if st.button(
                 header_btn_label,
                 key="nav_admin_header",
