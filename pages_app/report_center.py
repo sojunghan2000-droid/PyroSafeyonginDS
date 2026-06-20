@@ -52,7 +52,8 @@ def _styles():
 
 # ---------- 별지5 안전점검 결과 지적내역서 ----------
 
-def _build_pdf_byeolji5() -> bytes:
+def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
+    """별지5 PDF. round_id 지정 시 그 회차의 지적사항만 필터링."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -114,6 +115,9 @@ def _build_pdf_byeolji5() -> bytes:
     # 데이터 행
     types_all = ["임시소방시설", "피난로 등", "화기취급감독"]
     deficiencies = data.load_deficiencies()
+    if round_id:
+        round_tasks = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
+        deficiencies = [d for d in deficiencies if d.task_id in round_tasks]
     data_start = len(rows)
     for d in deficiencies:
         type_lines = [

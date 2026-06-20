@@ -198,6 +198,84 @@ def new_inspection_dialog() -> None:
         st.rerun()
 
 
+@st.dialog("회차에 Task 추가", width="large")
+def add_task_to_round_dialog(round_id: str) -> None:
+    """v1.5 자유 점검 회차에 Task 1건 동적 추가."""
+    r = data.get_round(round_id)
+    if not r:
+        st.error("회차를 찾을 수 없습니다.")
+        return
+
+    st.markdown(
+        f"<div style='color:#64748B; font-size:0.86rem; margin-bottom:0.5rem;'>"
+        f"<b>{r.round_id}</b> · {r.task_type}<br>"
+        f"담당 {r.assignee or '미지정'} · 마감 {fmt_date(r.due_date)}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # 회차의 점검 유형에 맞는 장비 후보
+    all_eq = data.load_equipment()
+    if r.task_type in TASK_INSPECTION_TYPES:
+        candidates = [
+            e for e in all_eq if r.task_type in (e.inspection_types or [])
+        ]
+    else:
+        candidates = all_eq
+
+    # 이미 회차에 포함된 장비는 후보에서 제외 (location_id 기준)
+    already_locs = {
+        t.equipment_label.split(" - ")[0].strip()
+        for t in data.tasks_of_round(round_id, include_excluded=True)
+    }
+    candidates = [c for c in candidates if c.location_id not in already_locs]
+
+    if not candidates:
+        st.info(
+            f"이 점검 유형에 매핑된 장비 중 '회차에 미포함'인 후보가 없습니다. "
+            "장비 마스터의 inspection_types를 확인하세요."
+        )
+        return
+
+    eq_idx = st.selectbox(
+        "추가할 장비",
+        options=range(len(candidates)),
+        format_func=lambda i: (
+            f"{candidates[i].location_id} · {candidates[i].equipment_name} "
+            f"({candidates[i].category})"
+        ),
+        key=f"add_tsk_eq_{round_id}",
+    )
+    sel_eq = candidates[eq_idx]
+    note = st.text_input(
+        "메모(선택)",
+        key=f"add_tsk_note_{round_id}",
+        placeholder=r.note,
+    )
+
+    if st.button(
+        "추가", type="primary", use_container_width=True,
+        key=f"add_tsk_submit_{round_id}",
+    ):
+        from lib.data import next_task_id, add_task, _refresh_round_status
+        new_tsk = next_task_id()
+        add_task(InspectionTask(
+            task_id=new_tsk,
+            equipment_label=f"{sel_eq.location_id} - {sel_eq.equipment_name}",
+            task_type=r.task_type,
+            assignee=r.assignee or "Unassigned",
+            due_date=r.due_date,
+            status="Scheduled",
+            floor=sel_eq.floor,
+            zone=sel_eq.zone,
+            note=note.strip() or r.note,
+            round_id=round_id,
+        ))
+        _refresh_round_status(round_id)
+        st.session_state["just_added_task"] = new_tsk
+        st.rerun()
+
+
 @st.dialog("조치 입력", width="large")
 def action_input_dialog(deficiency_id: str) -> None:
     """v1.5 Deficiency 후속 조치 입력 모달. 작업 조치 관리에서 호출."""

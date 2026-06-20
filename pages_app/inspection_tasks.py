@@ -6,7 +6,9 @@ from datetime import datetime
 import streamlit as st
 
 from lib import data, auth
-from lib.inspection_dialog import task_dialog, task_inspect_dialog
+from lib.inspection_dialog import (
+    add_task_to_round_dialog, task_dialog, task_inspect_dialog,
+)
 from lib.ui import TASK_STATUS_KO, badge, fmt_date, page_header, render_kpi_row
 
 
@@ -68,12 +70,42 @@ def _round_detail_dialog(round_id: str) -> None:
             unsafe_allow_html=True,
         )
 
-    # 활성 Task 리스트
-    st.markdown(
-        f"<div style='font-weight:600; color:#0F172A; font-size:0.95rem; "
-        f"margin:0.4rem 0 0.3rem;'>Task 목록 ({len(tasks_active)}건)</div>",
-        unsafe_allow_html=True,
-    )
+    # 회차 단위 별지5 PDF 다운로드 (지적사항이 1건 이상일 때만 활성)
+    round_task_ids = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
+    round_defs = [d for d in data.load_deficiencies() if d.task_id in round_task_ids]
+    pdl, pdr = st.columns([3, 1])
+    with pdr:
+        if round_defs:
+            from pages_app.report_center import _build_pdf_byeolji5
+            st.download_button(
+                f"별지5 PDF ({len(round_defs)}건)",
+                data=_build_pdf_byeolji5(round_id=round_id),
+                file_name=f"별지 5. 안전점검 결과 지적 내역서 ({round_id}).pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"rnd_pdf_{round_id}",
+            )
+        else:
+            st.button(
+                "별지5 PDF (0건)",
+                use_container_width=True,
+                disabled=True,
+                key=f"rnd_pdf_disabled_{round_id}",
+            )
+
+    # 활성 Task 리스트 헤더 + [+ 추가] 버튼
+    hl, hr = st.columns([3, 1])
+    with hl:
+        st.markdown(
+            f"<div style='font-weight:600; color:#0F172A; font-size:0.95rem; "
+            f"margin:0.4rem 0 0.3rem;'>Task 목록 ({len(tasks_active)}건)</div>",
+            unsafe_allow_html=True,
+        )
+    add_clicked = False
+    with hr:
+        if st.button("+ Task 추가", key=f"rnd_add_tsk_{round_id}",
+                     use_container_width=True):
+            add_clicked = True
     start_for: str | None = None  # [점검 시작] 클릭된 task_id
     if not tasks_active:
         st.info("이 회차에 점검 대상 장비가 없습니다.")
@@ -182,11 +214,13 @@ def _round_detail_dialog(round_id: str) -> None:
                     data.restore_task(t.task_id)
                     st.success(f"{t.task_id} 복구했습니다.")
 
-    # [점검 시작] 버튼이 클릭됐으면 그 Task의 입력 모달을 띄움.
-    # dialog 안에서 다른 dialog 호출은 불가하므로 session_state로 전달해
-    # 다음 rerun에서 띄운다.
+    # [점검 시작] / [+ Task 추가] 버튼이 클릭됐으면 다음 rerun에서 모달 호출
+    # (dialog 안에서 다른 dialog 호출 불가)
     if start_for:
         st.session_state["_open_task_inspect"] = start_for
+        st.rerun()
+    if add_clicked:
+        st.session_state["_open_add_task_to_round"] = round_id
         st.rerun()
 
 
@@ -230,6 +264,15 @@ def render() -> None:
     open_task = st.session_state.pop("_open_task_inspect", None)
     if open_task:
         task_inspect_dialog(open_task)
+
+    # 회차 상세 내 [+ Task 추가] 클릭 시 띄울 모달
+    open_add = st.session_state.pop("_open_add_task_to_round", None)
+    if open_add:
+        add_task_to_round_dialog(open_add)
+
+    added_tsk = st.session_state.pop("just_added_task", None)
+    if added_tsk:
+        st.success(f"신규 Task {added_tsk} 가 회차에 추가되었습니다.")
 
     # KPI — 회차 단위 + Task 단위 혼합
     total_rounds = len(rounds)
