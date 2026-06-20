@@ -89,6 +89,218 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
     return fig
 
 
+@st.dialog("spot 속성 변경", width="large")
+def _spot_edit_dialog(spot_id: str) -> None:
+    """기존 spot 속성 변경 모달. 도면 클릭으로 새 좌표 픽업, number_input 미세조정."""
+    spots = data.load_spots()
+    s = next((x for x in spots if x.spot_id == spot_id), None)
+    if not s:
+        st.error(f"spot을 찾을 수 없습니다: {spot_id}")
+        return
+
+    used = {e.spot_id for e in data.load_equipment() if e.spot_id}
+    in_use = s.spot_id in used
+    mapped_cnt = sum(1 for e in data.load_equipment() if e.spot_id == s.spot_id)
+
+    st.markdown(
+        f"<div style='color:#475569; font-size:0.9rem; margin-bottom:0.4rem;'>"
+        f"<b style='color:#0F172A;'>{s.spot_id}</b> · 층 <b>{s.floor}</b>"
+        f"<span style='color:#94A3B8;'> (spot_id/층은 변경 불가)</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    if in_use:
+        st.caption(
+            f"이 spot은 장비 {mapped_cnt}건에 매핑되어 있습니다. "
+            "방이름·좌표 변경 시 해당 장비의 위치 정보도 함께 갱신됩니다."
+        )
+
+    # 좌표 픽업 초기값 — 첫 진입 시 현재 spot 좌표 사용
+    init_x_key = f"edit_x_pct_{spot_id}"
+    init_y_key = f"edit_y_pct_{spot_id}"
+    if init_x_key not in st.session_state:
+        st.session_state[init_x_key] = float(s.x_pct)
+        st.session_state[init_y_key] = float(s.y_pct)
+
+    # 도면 — 현재 spot은 파란색, 다른 spot은 옅은 주황
+    other_spots = [x for x in spots if x.floor == s.floor and x.spot_id != s.spot_id]
+    fig = _make_floor_fig_edit(s, other_spots,
+                               st.session_state[init_x_key],
+                               st.session_state[init_y_key])
+    if fig is None:
+        st.warning(f"{s.floor} 도면 이미지가 없습니다.")
+    else:
+        from lib.floor_widget import (
+            control_toggle, floor_legend_html, plotly_config,
+        )
+        cc, lc = st.columns([1.2, 5])
+        with cc:
+            locked = control_toggle(f"edit_map_{spot_id}", default_locked=False)
+        with lc:
+            st.markdown(floor_legend_html(), unsafe_allow_html=True)
+
+        event = st.plotly_chart(
+            fig, use_container_width=True,
+            config=plotly_config(locked=locked),
+            on_select="rerun" if not locked else "ignore",
+            selection_mode=["points"] if not locked else [],
+            key=f"edit_map_chart_{spot_id}",
+        )
+        if (event and getattr(event, "selection", None)
+                and getattr(event.selection, "points", None)):
+            pt = event.selection.points[-1]
+            st.session_state[init_x_key] = round(pt["x"] / FIG_W * 100, 2)
+            st.session_state[init_y_key] = round((FIG_H - pt["y"]) / FIG_H * 100, 2)
+            st.rerun()
+
+        st.markdown(
+            "<div style='color:#94A3B8; font-size:0.78rem; margin-top:-0.4rem;'>"
+            "파란 마커 = 현재 spot · 옅은 주황 = 다른 spot · "
+            "도면 클릭 시 좌표 픽업 (그리드 단위 스냅)"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
+
+    ec1, ec2 = st.columns([1, 2])
+    with ec1:
+        new_room = st.text_input(
+            "방이름 *",
+            value=s.room_name,
+            key=f"edit_room_{spot_id}",
+        )
+    with ec2:
+        new_notes = st.text_input(
+            "비고",
+            value=s.notes,
+            key=f"edit_notes_{spot_id}",
+        )
+
+    ec3, ec4, _ = st.columns([1, 1, 2])
+    with ec3:
+        new_x = st.number_input(
+            "x_pct (도면 폭 %)",
+            min_value=0.0, max_value=100.0,
+            step=0.5, format="%.2f",
+            key=init_x_key,
+        )
+    with ec4:
+        new_y = st.number_input(
+            "y_pct (도면 높이 %)",
+            min_value=0.0, max_value=100.0,
+            step=0.5, format="%.2f",
+            key=init_y_key,
+        )
+
+    changed = (
+        new_room.strip() != s.room_name
+        or new_notes.strip() != s.notes
+        or round(new_x, 2) != round(s.x_pct, 2)
+        or round(new_y, 2) != round(s.y_pct, 2)
+    )
+
+    bc1, bc2 = st.columns([1, 1])
+    with bc1:
+        if st.button("저장", type="primary", use_container_width=True,
+                     key=f"edit_save_{spot_id}",
+                     disabled=not changed or not new_room.strip()):
+            n_synced = data.update_spot_with_equipment_sync(
+                data.Spot(
+                    spot_id=s.spot_id, floor=s.floor,
+                    room_name=new_room.strip(),
+                    notes=new_notes.strip(),
+                    x_pct=float(new_x), y_pct=float(new_y),
+                )
+            )
+            msg = f"{s.spot_id} 속성 저장 완료."
+            if n_synced:
+                msg += f" 매핑 장비 {n_synced}건의 위치 정보도 동기화."
+            st.session_state["admin_spot_save_msg"] = msg
+            # 모달 정리
+            for k in (init_x_key, init_y_key,
+                      f"edit_room_{spot_id}", f"edit_notes_{spot_id}"):
+                st.session_state.pop(k, None)
+            st.session_state.pop("admin_spot_edit_id", None)
+            st.rerun()
+    with bc2:
+        if st.button("취소", use_container_width=True,
+                     key=f"edit_cancel_{spot_id}"):
+            for k in (init_x_key, init_y_key,
+                      f"edit_room_{spot_id}", f"edit_notes_{spot_id}"):
+                st.session_state.pop(k, None)
+            st.session_state.pop("admin_spot_edit_id", None)
+            st.rerun()
+
+
+def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | None:
+    """spot 편집 모달용 도면 — 현재 spot은 파란색(현재 좌표 또는 클릭 좌표),
+    다른 spot은 옅은 주황. 좌표 픽업 그리드 + 클릭 가능 빈 영역."""
+    uri = _floor_image_uri(cur_spot.floor)
+    if uri is None:
+        return None
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    if other_spots:
+        fig.add_trace(go.Scatter(
+            x=[s.x_pct / 100 * FIG_W for s in other_spots],
+            y=[FIG_H - s.y_pct / 100 * FIG_H for s in other_spots],
+            mode="markers+text",
+            text=[s.spot_id.split("-")[-1] for s in other_spots],
+            textposition="top center",
+            textfont=dict(size=10, color="#94A3B8"),
+            marker=dict(size=12, color="#FDE68A",
+                        line=dict(color="#F59E0B", width=1.5)),
+            hovertemplate="<b>%{text}</b><extra></extra>",
+            name="다른 spot", showlegend=False,
+        ))
+
+    # 현재 spot — 파란 강조 (클릭으로 변경되면 새 좌표)
+    fig.add_trace(go.Scatter(
+        x=[x_pct / 100 * FIG_W],
+        y=[FIG_H - y_pct / 100 * FIG_H],
+        mode="markers+text",
+        text=[f"<b>{cur_spot.spot_id.split('-')[-1]}</b>"],
+        textposition="top center",
+        textfont=dict(size=12, color="#1D4ED8"),
+        marker=dict(size=20, color="#2563EB",
+                    line=dict(color="#FFFFFF", width=2.5),
+                    symbol="circle"),
+        hovertemplate=f"<b>{cur_spot.room_name}</b><br>{cur_spot.spot_id}<extra></extra>",
+        name="현재 spot", showlegend=False,
+    ))
+
+    # 클릭용 투명 격자
+    grid_x, grid_y = [], []
+    for i in range(50):
+        for j in range(50):
+            grid_x.append((i + 0.5) / 50 * FIG_W)
+            grid_y.append((j + 0.5) / 50 * FIG_H)
+    fig.add_trace(go.Scatter(
+        x=grid_x, y=grid_y,
+        mode="markers",
+        marker=dict(size=18, color="rgba(0,0,0,0)"),
+        hoverinfo="skip", showlegend=False,
+        name="grid",
+    ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="#F8FAFC", height=520,
+        dragmode="pan", showlegend=False,
+        clickmode="event+select",
+    )
+    return fig
+
+
 @st.dialog("신규 spot 정의", width="large")
 def _spot_define_dialog() -> None:
     """도면 클릭으로 좌표 픽업 + 속성 입력 + 저장. 위치 마스터 페이지에서 진입."""
@@ -262,14 +474,9 @@ def _spot_master_tab() -> None:
     st.markdown("<hr style='margin:0.3rem 0; border-color:#E2E8F0;'>",
                 unsafe_allow_html=True)
 
-    # 인라인 편집으로 열린 spot 1개 추적 (한 번에 한 행만 펼침)
-    open_spot_key = "admin_spot_edit_open"
-    open_spot_id = st.session_state.get(open_spot_key)
-
     for s in spots:
         row = st.columns(cols_ratio, vertical_alignment="center")
         in_use = s.spot_id in used
-        is_open = open_spot_id == s.spot_id
         row[0].markdown(
             f"<span style='font-weight:600; color:#0F172A;'>{s.spot_id}</span>",
             unsafe_allow_html=True,
@@ -292,18 +499,9 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
         with row[5]:
-            btn_label = "닫기" if is_open else "속성 변경"
-            if st.button(btn_label, key=f"admin_spot_edit_{s.spot_id}",
-                         use_container_width=True,
-                         type="primary" if is_open else "secondary"):
-                # 다른 행이 열려 있으면 닫고, 같은 행 클릭이면 토글
-                st.session_state[open_spot_key] = (
-                    None if is_open else s.spot_id
-                )
-                # 폼 키 초기화 (이전 spot의 값이 남아있지 않도록)
-                for k in ("edit_room_name", "edit_notes",
-                          "edit_x_pct", "edit_y_pct"):
-                    st.session_state.pop(k, None)
+            if st.button("속성 변경", key=f"admin_spot_edit_{s.spot_id}",
+                         use_container_width=True):
+                st.session_state["admin_spot_edit_id"] = s.spot_id
                 st.rerun()
         with row[6]:
             if st.button("삭제", key=f"admin_spot_del_{s.spot_id}",
@@ -311,95 +509,15 @@ def _spot_master_tab() -> None:
                 data.delete_spot(s.spot_id)
                 st.rerun()
 
-        # 인라인 편집 영역 — 펼침
-        if is_open:
-            with st.container(border=True):
-                st.markdown(
-                    f"<div style='color:#475569; font-size:0.85rem; "
-                    f"margin-bottom:0.4rem;'>"
-                    f"<b style='color:#0F172A;'>{s.spot_id}</b> 속성 변경 "
-                    f"<span style='color:#94A3B8;'>· 층 <b>{s.floor}</b> "
-                    f"(spot_id/층은 변경 불가)</span></div>",
-                    unsafe_allow_html=True,
-                )
-                if in_use:
-                    st.caption(
-                        "이 spot은 장비에 매핑되어 있습니다. "
-                        "방이름·좌표 변경 시 해당 장비의 위치 정보도 함께 갱신됩니다."
-                    )
-                ec1, ec2 = st.columns([1, 2])
-                with ec1:
-                    new_room = st.text_input(
-                        "방이름",
-                        value=s.room_name,
-                        key="edit_room_name",
-                    )
-                with ec2:
-                    new_notes = st.text_input(
-                        "비고",
-                        value=s.notes,
-                        key="edit_notes",
-                    )
-                ec3, ec4, _ = st.columns([1, 1, 2])
-                with ec3:
-                    new_x = st.number_input(
-                        "x_pct (도면 폭 %)",
-                        min_value=0.0, max_value=100.0,
-                        value=float(s.x_pct), step=0.5, format="%.2f",
-                        key="edit_x_pct",
-                    )
-                with ec4:
-                    new_y = st.number_input(
-                        "y_pct (도면 높이 %)",
-                        min_value=0.0, max_value=100.0,
-                        value=float(s.y_pct), step=0.5, format="%.2f",
-                        key="edit_y_pct",
-                    )
-
-                # 변경 여부 표시
-                changed = (
-                    new_room.strip() != s.room_name
-                    or new_notes.strip() != s.notes
-                    or round(new_x, 2) != round(s.x_pct, 2)
-                    or round(new_y, 2) != round(s.y_pct, 2)
-                )
-
-                bc1, bc2 = st.columns([1, 1])
-                with bc1:
-                    if st.button(
-                        "저장",
-                        type="primary",
-                        use_container_width=True,
-                        key=f"admin_spot_save_{s.spot_id}",
-                        disabled=not changed or not new_room.strip(),
-                    ):
-                        n_synced = data.update_spot_with_equipment_sync(
-                            data.Spot(
-                                spot_id=s.spot_id, floor=s.floor,
-                                room_name=new_room.strip(),
-                                notes=new_notes.strip(),
-                                x_pct=float(new_x), y_pct=float(new_y),
-                            )
-                        )
-                        st.session_state[open_spot_key] = None
-                        msg = f"{s.spot_id} 속성 저장 완료."
-                        if n_synced:
-                            msg += f" 매핑 장비 {n_synced}건의 위치 정보도 동기화."
-                        st.session_state["admin_spot_save_msg"] = msg
-                        st.rerun()
-                with bc2:
-                    if st.button(
-                        "취소",
-                        use_container_width=True,
-                        key=f"admin_spot_cancel_{s.spot_id}",
-                    ):
-                        st.session_state[open_spot_key] = None
-                        st.rerun()
-
     # 저장 후 토스트
     msg = st.session_state.pop("admin_spot_save_msg", None)
     if msg:
         st.success(msg)
+
+    # 편집 모달 트리거
+    edit_id = st.session_state.get("admin_spot_edit_id")
+    if edit_id:
+        _spot_edit_dialog(edit_id)
 
 
 def _user_admin_tab() -> None:
