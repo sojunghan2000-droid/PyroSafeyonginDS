@@ -503,16 +503,25 @@ def apply_theme() -> None:
     st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 
-def _notify_count() -> tuple[int, int]:
-    """알림 카운트 = 조치 대기 통보서 + 지연 태스크.
-    데이터 로드 실패 시 (0,0)."""
+def _notify_count() -> tuple[int, int, int]:
+    """알림 카운트 = (조치 대기 통보서, 지연 태스크, 마감 임박 회차).
+    마감 임박 = 오늘부터 3일 이내 + 미완료. 데이터 로드 실패 시 (0,0,0)."""
     try:
-        from lib import data  # 함수 내부 import: 순환 의존 회피
+        from datetime import timedelta
+        from lib import data
         pending = sum(1 for n in data.load_notices() if not n.action_done)
         overdue = sum(1 for t in data.load_tasks() if t.status == "Overdue")
-        return pending, overdue
+        today = data.TODAY
+        deadline = today + timedelta(days=3)
+        soon = sum(
+            1 for r in data.load_rounds()
+            if r.status != "Completed"
+            and r.due_date is not None
+            and today <= r.due_date <= deadline
+        )
+        return pending, overdue, soon
     except Exception:
-        return 0, 0
+        return 0, 0, 0
 
 
 def render_topbar(_active_page: str | None = None) -> None:
@@ -587,14 +596,17 @@ def _render_help_button() -> None:
 def _render_notify_button() -> None:
     """상단바 알림 벨 — st.popover (아바타 메뉴와 동일 패턴).
     트리거: 카운트 표시 + 색 강조. 본문: 조치 대기 통보서 + 지연 태스크 리스트."""
-    pending, overdue = _notify_count()
-    total = pending + overdue
+    pending, overdue, soon = _notify_count()
+    total = pending + overdue + soon
     if total == 0:
         label = "🔔"
         title = "알림 없음"
     else:
         label = f"🔔 {total if total <= 99 else '99+'}"
-        title = f"조치 대기 {pending}건 · 지연 태스크 {overdue}건"
+        title = (
+            f"조치 대기 {pending}건 · 지연 태스크 {overdue}건 · "
+            f"마감 임박 회차 {soon}건"
+        )
 
     with st.container(key="notify_btn"):
         with st.popover(label, help=title, use_container_width=False):
@@ -605,19 +617,30 @@ def _render_notify_button() -> None:
 
 
 def _notify_panel() -> None:
-    """알림 popover 내부 콘텐츠. 조치 대기 통보서 + 지연 태스크 리스트.
-    각 행 [이동 →] 클릭 시 해당 페이지로 라우팅."""
-    from lib import data  # 순환 import 회피
+    """알림 popover 내부 콘텐츠. 조치 대기 통보서 + 지연 태스크 + 마감 임박 회차.
+    각 행 클릭 시 해당 페이지로 라우팅."""
+    from datetime import timedelta
+    from lib import data
     notices = [n for n in data.load_notices() if not n.action_done]
     tasks = [t for t in data.load_tasks() if t.status == "Overdue"]
-    total = len(notices) + len(tasks)
+    today = data.TODAY
+    deadline = today + timedelta(days=3)
+    rounds_soon = [
+        r for r in data.load_rounds()
+        if r.status != "Completed"
+        and r.due_date is not None
+        and today <= r.due_date <= deadline
+    ]
+    rounds_soon.sort(key=lambda r: r.due_date)
+    total = len(notices) + len(tasks) + len(rounds_soon)
 
     # popover 내부 최소 폭 보장 — 트리거(40px) 기준으로 너무 좁아지지 않도록
     st.markdown(
         f"<div style='min-width:380px; max-width:480px;'>"
         f"<div style='font-weight:700; color:#0F172A; font-size:1rem;'>알림</div>"
         f"<div style='color:#64748B; font-size:0.82rem; margin-bottom:0.6rem;'>"
-        f"총 {total}건 · 통보서 {len(notices)} · 지연 태스크 {len(tasks)}"
+        f"총 {total}건 · 통보서 {len(notices)} · 지연 태스크 {len(tasks)} · "
+        f"마감 임박 {len(rounds_soon)}"
         f"</div></div>",
         unsafe_allow_html=True,
     )
@@ -677,6 +700,32 @@ def _notify_panel() -> None:
                     st.session_state["page"] = "tasks"
                     st.session_state["tasks_view"] = "지연"
                     st.session_state["focus_task"] = t.task_id
+                    st.rerun()
+
+    # ─ 마감 임박 회차 (3일 이내) ─
+    if rounds_soon:
+        st.markdown(
+            "<div style='font-weight:600; color:#0F172A; font-size:0.88rem; "
+            "margin:0.5rem 0 0.3rem;'>마감 임박 회차 (3일 이내)</div>",
+            unsafe_allow_html=True,
+        )
+        for r in rounds_soon:
+            days = (r.due_date - today).days
+            day_txt = "오늘 마감" if days == 0 else f"{days}일 남음"
+            day_color = ":red" if days <= 1 else ":orange"
+            done, total = data.round_progress(r.round_id)
+            label = (
+                f"**{r.round_id} · {r.task_type}**  \n"
+                f"진행 {done}/{total} · "
+                f":gray[담당 {r.assignee or '미지정'} · 마감 "
+                f"{fmt_date(r.due_date)}] {day_color}[**{day_txt}**]"
+            )
+            with st.container(key=f"notify_card_r_{r.round_id}"):
+                if st.button(label,
+                             key=f"notify_btn_r_{r.round_id}",
+                             use_container_width=True):
+                    st.session_state["page"] = "tasks"
+                    st.session_state["focus_round"] = r.round_id
                     st.rerun()
 
 

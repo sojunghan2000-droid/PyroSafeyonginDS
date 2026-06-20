@@ -158,9 +158,30 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
 
 
 # ---------- 별지6 안전점검 조치 결과 통보서 ----------
+# v1.5: 자료원이 Notice → Deficiency.action_* 로 변경됨 (별지6 데이터 흡수).
+# 출력 양식은 동일 — 보고서 내용 변경 없음.
 
-def _byeolji6_table(notice):
+def _byeolji6_get_photo(item) -> bytes | None:
+    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환)."""
+    # 신모델: Deficiency.action_photo_path → Storage 다운로드
+    path = getattr(item, "action_photo_path", None)
+    if path:
+        try:
+            return data._db().storage.from_(data.ACTION_PHOTO_BUCKET).download(path)
+        except Exception:
+            return None
+    # 구모델: Notice 객체면 기존 헬퍼
+    if hasattr(item, "notice_no") and hasattr(data, "get_action_photo"):
+        try:
+            return data.get_action_photo(item)
+        except Exception:
+            return None
+    return None
+
+
+def _byeolji6_table(item):
     """단일 통보서를 표현하는 ReportLab Table 1개를 반환.
+    item: v1.5 Deficiency(action_* 흡수) 또는 구 Notice 객체.
     합본 PDF 구성 시 통보서 사이에 PageBreak()를 삽입해 이어붙인다."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4  # noqa: F401 (col width 단위 정합)
@@ -170,11 +191,22 @@ def _byeolji6_table(notice):
     s = _styles()
     COL_W = [22 * mm, 38 * mm, 60 * mm, 60 * mm]  # 180mm 합
 
-    n = notice
-    notice_no = n.notice_no if n else ""
+    n = item
+    notice_no = (n.notice_no if n else "") or ""
     inspection_date = n.inspection_date.strftime("%Y년 %m월 %d일") if n else ""
-    submitter = n.submitter if n else ""
-    confirmer = n.confirmer if n else ""
+    submitter = (getattr(n, "submitter", None) or "박소방") if n else ""
+    confirmer = (n.confirmer if n and n.confirmer else "김소장") if n else ""
+
+    # 점검 종류: Notice는 inspection_type(단수), Deficiency는 inspection_types(복수)
+    if n:
+        if hasattr(n, "inspection_type") and getattr(n, "inspection_type", None):
+            insp_type = n.inspection_type
+        elif hasattr(n, "inspection_types") and n.inspection_types:
+            insp_type = ", ".join(n.inspection_types)
+        else:
+            insp_type = ""
+    else:
+        insp_type = ""
 
     rows = []
     row_heights = []
@@ -209,12 +241,12 @@ def _byeolji6_table(notice):
 
     # row 3: 데이터 + 조치 결과 사진 (있으면 임베드)
     if n:
-        photo_cell = _photo_image(data.get_action_photo(n), max_w_mm=58, max_h_mm=70)
+        photo_cell = _photo_image(_byeolji6_get_photo(n), max_w_mm=58, max_h_mm=70)
         if photo_cell is None:
             photo_cell = Paragraph("사진첨부", s["cell"])
         rows.append([
             Paragraph(f"{n.floor}<br/>{n.zone}", s["cell"]),
-            Paragraph(n.inspection_type, s["cell"]),
+            Paragraph(insp_type, s["cell"]),
             Paragraph(n.issue, s["left"]),
             photo_cell,
         ])
@@ -223,7 +255,7 @@ def _byeolji6_table(notice):
     row_heights.append(75 * mm)
 
     # row 4: 조치 내용 / 완료일 (있으면 표시)
-    if n and n.action_done:
+    if n and getattr(n, "action_done", False):
         rows.append([
             Paragraph("조치<br/>완료일", s["h"]),
             Paragraph(n.action_at.isoformat() if n.action_at else "-", s["cell"]),
@@ -284,10 +316,14 @@ def _build_pdf_byeolji6_multi(notices) -> bytes:
 
 
 def _build_pdf_byeolji6(notice=None) -> bytes:
-    """별지6 통보서 PDF (단건). notice 미지정 시 최신 1건."""
+    """별지6 통보서 PDF (단건). v1.5: 자료원은 Deficiency.action_*.
+    notice 미지정 시 최신 1건(통보서 발급 + 조치 완료) 의 Deficiency."""
     if notice is None:
-        notices = data.load_notices()
-        notice = notices[0] if notices else None
+        defs = [
+            d for d in data.load_deficiencies()
+            if d.notice_no and d.action_done
+        ]
+        notice = defs[0] if defs else None
     return _build_pdf_byeolji6_multi([notice])
 
 
@@ -446,9 +482,12 @@ def render() -> None:
     _, mid6, _ = st.columns([1, 2, 1])
     with mid6:
         st.markdown(_card_header("별지6", "안전점검 조치 결과 통보서"), unsafe_allow_html=True)
-        notices = data.load_notices()
-        done = [n for n in notices if n.action_done]
-        pending = [n for n in notices if not n.action_done]
+        # v1.5: 자료원이 Notice → Deficiency.action_*. 통보서가 발급된 (notice_no 있음)
+        # Deficiency 중 조치 완료된 행이 별지6 출력 대상.
+        all_defs = [d for d in data.load_deficiencies() if d.notice_no]
+        done = [d for d in all_defs if d.action_done]
+        pending = [d for d in all_defs if not d.action_done]
+        notices = all_defs  # 이하 로직 호환용 alias
         if not notices:
             st.info("발급된 통보서가 없습니다.")
         elif not done:
