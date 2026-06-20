@@ -366,7 +366,9 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             name="임시 spot", showlegend=False,
         ))
 
-    # 클릭 가능한 투명 격자 — 빈 곳 클릭으로 임시 spot 좌표 픽업
+    # 클릭 가능한 격자 — 빈 곳 클릭으로 임시 spot 좌표 픽업
+    # 사용자가 클릭 영역을 인지하도록 살짝 보이는 점(매우 흐린 회색) +
+    # 호버 시 안내 텍스트로 어디든 클릭 가능함을 시각적으로 전달.
     grid_x, grid_y = [], []
     for i in range(50):
         for j in range(50):
@@ -375,9 +377,14 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     fig.add_trace(go.Scatter(
         x=grid_x, y=grid_y,
         mode="markers",
-        marker=dict(size=18, color="rgba(0,0,0,0)"),
+        marker=dict(
+            size=10,
+            color="rgba(100,116,139,0.18)",
+            line=dict(width=0),
+        ),
         customdata=[("grid",)] * len(grid_x),
-        hoverinfo="skip", showlegend=False,
+        hovertemplate="여기 클릭 → 임시 spot 좌표 픽업<extra></extra>",
+        showlegend=False,
         name="grid",
     ))
 
