@@ -260,8 +260,10 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     # 후보 장비 (도면 매칭 가능 = floor 일치 + 좌표 있음)
     # 매칭(점검 주기 일치) = 파란 / 비매칭 = 옅은 회색 (자유 추가)
     floor_cands = [c for c in candidates if c.floor == floor]
+    _round_obj = data.get_round(round_id)
+    _round_task_type = _round_obj.task_type if _round_obj else ""
     matched_set = {e.equipment_id for e in candidates
-                   if r.task_type in (e.inspection_types or [])}
+                   if _round_task_type in (e.inspection_types or [])}
     if floor_cands:
         spots = {s.spot_id: s for s in data.load_spots(floor)}
         match_xs, match_ys, match_txt, match_cd = [], [], [], []
