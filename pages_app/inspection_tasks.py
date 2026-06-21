@@ -109,10 +109,11 @@ def _round_detail_dialog(round_id: str) -> None:
     if not tasks_active:
         st.info("이 회차에 점검 대상 장비가 없습니다.")
     else:
-        # 컬럼 6개 — 점검 시작 버튼 추가
-        cols_ratio = [0.9, 2.4, 0.9, 0.9, 1.0, 0.7]
+        # 컬럼 7개 — 결과 컬럼 추가 (Completed Task만 채움)
+        cols_ratio = [0.7, 1.5, 0.7, 0.7, 2.2, 0.9, 0.6]
         head = st.columns(cols_ratio)
-        for col, txt in zip(head, ["작업 ID", "장비", "상태", "마감일", "", ""]):
+        for col, txt in zip(head,
+                            ["작업 ID", "장비", "상태", "마감일", "결과", "", ""]):
             col.markdown(
                 f"<div style='color:#64748B; font-size:0.76rem; "
                 f"font-weight:600;'>{txt}</div>",
@@ -142,7 +143,57 @@ def _round_detail_dialog(round_id: str) -> None:
                 f"{fmt_date(t.due_date)}</span>",
                 unsafe_allow_html=True,
             )
+            # 결과 컬럼 — Completed Task에만 inline 결과 카드 (한 행 안에 모든 정보)
             with row[4]:
+                if t.status == "Completed":
+                    d = def_by_task.get(t.task_id)
+                    if d:
+                        is_good = (d.resolution == "완료" and not d.notice_no)
+                        badge_color = "#16A34A" if is_good else "#DC2626"
+                        badge_bg = "#DCFCE7" if is_good else "#FEE2E2"
+                        badge_txt = "양호" if is_good else "불량"
+                        types_str = ", ".join(d.inspection_types) if d.inspection_types else "-"
+                        insp_date = fmt_date(d.inspection_date) if d.inspection_date else "-"
+                        extra_html = ""
+                        if not is_good and d.issue:
+                            extra_html += (
+                                f"<div style='color:#92400E; font-size:0.78rem; "
+                                f"margin-top:0.15rem;'>"
+                                f"⚠️ {d.issue}</div>"
+                            )
+                        if d.action_done and d.action_note:
+                            extra_html += (
+                                f"<div style='color:#15803D; font-size:0.78rem; "
+                                f"margin-top:0.1rem;'>"
+                                f"✅ {d.action_note}"
+                                f"{' · ' + d.confirmer if d.confirmer else ''}</div>"
+                            )
+                        st.markdown(
+                            f"<div style='padding:0.35rem 0.55rem; background:#F8FAFC; "
+                            f"border-left:3px solid {badge_color}; border-radius:6px;'>"
+                            f"<span style='background:{badge_bg}; color:{badge_color}; "
+                            f"padding:0.05rem 0.45rem; border-radius:999px; "
+                            f"font-size:0.72rem; font-weight:700;'>{badge_txt}</span> "
+                            f"<span style='color:#475569; font-size:0.78rem; "
+                            f"margin-left:0.3rem;'>"
+                            f"{d.inspector or '-'} · {insp_date}"
+                            f" · {types_str}</span>"
+                            f"{extra_html}"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            "<span style='color:#94A3B8; font-size:0.78rem;'>"
+                            "결과 없음</span>",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.markdown(
+                        "<span style='color:#94A3B8; font-size:0.78rem;'>-</span>",
+                        unsafe_allow_html=True,
+                    )
+            with row[5]:
                 # 점검 시작 — 회차 모달 안 인라인 펼침 (모달 호출 X)
                 disabled = (t.status == "Completed")
                 inline_key = "round_inline_start_for"
@@ -160,7 +211,7 @@ def _round_detail_dialog(round_id: str) -> None:
                     st.session_state[inline_key] = (
                         None if is_inline_open else t.task_id
                     )
-            with row[5]:
+            with row[6]:
                 # 제외 폼 토글 (상세 내 인라인 확장)
                 open_key = "round_dlg_exclude_open"
                 is_open = st.session_state.get(open_key) == t.task_id
@@ -199,48 +250,6 @@ def _round_detail_dialog(round_id: str) -> None:
                 with st.container(border=True):
                     from lib.inspection_dialog import task_inspect_inline
                     task_inspect_inline(t.task_id)
-
-            # Completed Task의 점검 결과 inline 카드
-            if t.status == "Completed":
-                d = def_by_task.get(t.task_id)
-                if d:
-                    is_good = (d.resolution == "완료" and not d.notice_no)
-                    badge_color = "#16A34A" if is_good else "#DC2626"
-                    badge_bg = "#DCFCE7" if is_good else "#FEE2E2"
-                    badge_txt = "양호" if is_good else "불량"
-                    types_str = ", ".join(d.inspection_types) if d.inspection_types else "-"
-                    insp_date = fmt_date(d.inspection_date) if d.inspection_date else "-"
-
-                    extra_html = ""
-                    if not is_good and d.issue:
-                        extra_html += (
-                            f"<div style='margin-top:0.3rem; color:#92400E; "
-                            f"font-size:0.83rem;'>"
-                            f"⚠️ <b>지적사항:</b> {d.issue}</div>"
-                        )
-                    if d.action_done and d.action_note:
-                        extra_html += (
-                            f"<div style='margin-top:0.2rem; color:#15803D; "
-                            f"font-size:0.83rem;'>"
-                            f"✅ <b>현장 즉시 조치:</b> {d.action_note}"
-                            f"{' · 확인자 ' + d.confirmer if d.confirmer else ''}</div>"
-                        )
-
-                    st.markdown(
-                        f"<div style='margin:0.2rem 0 0.4rem 1.2rem; "
-                        f"padding:0.5rem 0.7rem; background:#F8FAFC; "
-                        f"border-left:3px solid {badge_color}; border-radius:6px;'>"
-                        f"<span style='background:{badge_bg}; color:{badge_color}; "
-                        f"padding:0.1rem 0.5rem; border-radius:999px; "
-                        f"font-size:0.75rem; font-weight:700;'>{badge_txt}</span> "
-                        f"<span style='color:#475569; font-size:0.83rem; "
-                        f"margin-left:0.5rem;'>"
-                        f"{d.inspector or '-'} · {insp_date} · "
-                        f"점검종류: {types_str}</span>"
-                        f"{extra_html}"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
 
     # 제외 로그
     if excluded:
