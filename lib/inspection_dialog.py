@@ -84,14 +84,12 @@ def new_inspection_dialog() -> None:
     with c2:
         inspect_date = st.date_input("점검일", value=date.today(), key="dlg_inspect_date")
 
-    st.markdown("<b style='color:#334155; font-size:0.92rem;'>점검 종류 (별지5)</b>",
-                unsafe_allow_html=True)
-    type_cols = st.columns(3)
-    types_selected = []
-    for col, t in zip(type_cols, INSPECTION_TYPES):
-        with col:
-            if st.checkbox(t, key=f"dlg_chk_{t}"):
-                types_selected.append(t)
+    types_selected = st.multiselect(
+        "점검 종류 (별지5)",
+        options=list(INSPECTION_TYPES),
+        key="dlg_chk_types",
+        placeholder="해당 점검종류를 선택하세요 (복수 가능)",
+    )
 
     st.markdown("<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>점검 결과</b>",
                 unsafe_allow_html=True)
@@ -1032,16 +1030,12 @@ def task_inspect_dialog(task_id: str) -> None:
             "점검일", value=date.today(), key=f"tsk_date_{task_id}",
         )
 
-    st.markdown(
-        "<b style='color:#334155; font-size:0.92rem;'>점검 종류 (별지5)</b>",
-        unsafe_allow_html=True,
+    types_selected = st.multiselect(
+        "점검 종류 (별지5)",
+        options=list(INSPECTION_TYPES),
+        key=f"tsk_chk_types_{task_id}",
+        placeholder="해당 점검종류를 선택하세요 (복수 가능)",
     )
-    type_cols = st.columns(3)
-    types_selected = []
-    for col, ty in zip(type_cols, INSPECTION_TYPES):
-        with col:
-            if st.checkbox(ty, key=f"tsk_chk_{task_id}_{ty}"):
-                types_selected.append(ty)
 
     st.markdown(
         "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
