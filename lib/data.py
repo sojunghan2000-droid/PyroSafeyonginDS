@@ -181,7 +181,8 @@ class Notice:
 
 @dataclass
 class Malfunction:
-    """별지9 소방시설 오동작 관리대장 row."""
+    """별지9 소방시설 오동작 관리대장 row.
+    v1.5+: 등록(detail까지)과 조치(action_*)를 분리 — 작업 조치 관리에서 후속 조치 입력."""
     malfunction_id: str
     category: EquipmentCategory
     occurred_on: date
@@ -189,6 +190,9 @@ class Malfunction:
     action: str
     confirmer: str
     task_id: str | None = None  # v1.4: 점검 회차의 Task에 자동 매핑
+    action_done: bool = False    # v1.5+: 조치 완료 여부
+    action_at: date | None = None
+    action_note: str = ""
 
 
 # ---------- Supabase 클라이언트 ----------
@@ -336,6 +340,9 @@ def _row_to_malfunction(r: dict) -> Malfunction:
         occurred_on=_d(r["occurred_on"]), detail=r["detail"],
         action=r.get("action") or "", confirmer=r.get("confirmer") or "",
         task_id=r.get("task_id"),
+        action_done=bool(r.get("action_done") or False),
+        action_at=_d(r.get("action_at")),
+        action_note=r.get("action_note") or "",
     )
 
 
@@ -713,7 +720,24 @@ def add_malfunction(m: Malfunction) -> None:
         "occurred_on": _iso(m.occurred_on), "detail": m.detail,
         "action": m.action, "confirmer": m.confirmer,
         "task_id": m.task_id,
+        "action_done": m.action_done,
+        "action_at": _iso(m.action_at),
+        "action_note": m.action_note,
     }).execute()
+    _malfunction_rows.clear()
+
+
+def record_malfunction_action(
+    malfunction_id: str, action_at: date, action_note: str, confirmer: str,
+) -> None:
+    """오동작 조치 입력 — 작업 조치 관리에서 호출."""
+    _db().table("malfunctions").update({
+        "action_done": True,
+        "action_at": _iso(action_at),
+        "action_note": action_note,
+        "confirmer": confirmer,
+        "action": action_note,  # 기존 action 필드도 동기화
+    }).eq("malfunction_id", malfunction_id).execute()
     _malfunction_rows.clear()
 
 

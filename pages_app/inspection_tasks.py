@@ -299,13 +299,18 @@ def render() -> None:
             "안전점검 회차(Round) 단위로 점검을 진행합니다. 회차 [상세]에서 [점검 시작]으로 별지5 결과를 기록하세요.",
         )
     new_task_clicked = False
+    mal_clicked = False
     with action_col:
-        b1, b2 = st.columns(2)
+        b1, b2, b3 = st.columns(3)
         with b1:
             if st.button("신규 일정 등록", type="primary",
                          use_container_width=True, key="open_new_task"):
                 new_task_clicked = True
         with b2:
+            if st.button("오동작 등록", use_container_width=True,
+                         key="open_new_malfunction_insp"):
+                mal_clicked = True
+        with b3:
             st.button("감사 로그 내보내기", use_container_width=True)
 
     submitted_round = st.session_state.pop("just_submitted_round", None)
@@ -322,6 +327,13 @@ def render() -> None:
 
     if new_task_clicked:
         task_dialog()
+
+    # 오동작 등록 — 안전점검 우상단 진입점 (v1.5+)
+    if mal_clicked:
+        from lib.inspection_dialog import malfunction_dialog
+        malfunction_dialog()
+    if st.session_state.pop("just_submitted_malfunction", False):
+        st.success("오동작이 별지9에 등록되었습니다. [작업 조치 관리]에서 조치 입력하세요.")
 
     # 회차 상세 내 [점검 시작] 클릭 시 띄울 모달
     open_task = st.session_state.pop("_open_task_inspect", None)

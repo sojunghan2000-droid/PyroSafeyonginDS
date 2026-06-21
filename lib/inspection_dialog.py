@@ -1174,7 +1174,8 @@ def malfunction_dialog() -> None:
     """별지9 소방시설 오동작 관리대장 row 추가 모달."""
     st.markdown(
         "<div style='color:#64748B; font-size:0.88rem; margin-bottom:0.5rem;'>"
-        "운영 중 발생한 소방시설 오동작을 별지9에 기록합니다. 점검 결과와는 별개 사건입니다."
+        "운영 중 발생한 소방시설 오동작을 별지9에 기록합니다. 점검 결과와는 별개 사건입니다.<br>"
+        "<b>등록만</b> 하고 조치는 별도 시점에 [작업 조치 관리]에서 입력합니다."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1194,25 +1195,17 @@ def malfunction_dialog() -> None:
     with c1:
         occurred = st.date_input("발생일자", value=date.today(), key="mal_dlg_date")
     with c2:
-        confirmer = st.text_input("확인자", value="박소방", key="mal_dlg_confirmer")
+        reporter = st.text_input("최초 발견자", value="박소방", key="mal_dlg_reporter")
 
     detail = st.text_area(
         "오동작 내용",
         placeholder="예: 점등 불량, 충수 상태 불량, 오작동 등",
         key="mal_dlg_detail",
     )
-    action = st.text_input(
-        "조치 결과",
-        placeholder="예: 교체, 수원공급, 재점검 등",
-        key="mal_dlg_action",
-    )
 
     if st.button("등록", type="primary", use_container_width=True, key="mal_dlg_submit"):
         if not detail.strip():
             st.error("오동작 내용을 입력해 주세요.")
-            return
-        if not action.strip():
-            st.error("조치 결과를 입력해 주세요.")
             return
 
         new_id = data.next_malfunction_id()
@@ -1221,10 +1214,65 @@ def malfunction_dialog() -> None:
             category=category,  # type: ignore[arg-type]
             occurred_on=occurred,
             detail=detail.strip(),
-            action=action.strip(),
-            confirmer=confirmer,
+            action="",  # 조치는 후속 시점에 작업 조치 관리에서 입력
+            confirmer=reporter,  # 최초 발견자
+            action_done=False,
         ))
         st.session_state["just_submitted_malfunction"] = True
+        st.rerun()
+
+
+@st.dialog("오동작 조치 입력", width="large")
+def malfunction_action_dialog(malfunction_id: str) -> None:
+    """별지9 오동작의 후속 조치 입력 모달. 작업 조치 관리 [조치 입력 →]에서 호출."""
+    m = next(
+        (x for x in data.load_malfunctions() if x.malfunction_id == malfunction_id),
+        None,
+    )
+    if not m:
+        st.error("오동작 정보를 찾을 수 없습니다.")
+        return
+
+    st.markdown(
+        f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; "
+        f"border-radius:8px; padding:0.6rem 0.8rem; margin-bottom:0.5rem;'>"
+        f"<b style='color:#0F172A;'>{m.malfunction_id}</b> · {m.category}<br>"
+        f"<span style='color:#475569; font-size:0.86rem;'>"
+        f"발생 {fmt_date(m.occurred_on)} · 최초 발견자 {m.confirmer or '-'}</span><br>"
+        f"<div style='color:#92400E; font-size:0.86rem; margin-top:0.3rem;'>"
+        f"⚠️ {m.detail}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        act_at = st.date_input(
+            "조치 일자", value=date.today(),
+            key=f"mal_act_date_{malfunction_id}",
+        )
+    with c2:
+        confirmer = st.text_input(
+            "확인자", value=m.confirmer or "김소장",
+            key=f"mal_act_conf_{malfunction_id}",
+        )
+    act_note = st.text_area(
+        "조치 내용",
+        placeholder="예: 부품 교체, 회로 점검 완료, 외부 수리 의뢰 등",
+        key=f"mal_act_note_{malfunction_id}",
+    )
+
+    if st.button(
+        "조치 완료 저장", type="primary", use_container_width=True,
+        key=f"mal_act_submit_{malfunction_id}",
+    ):
+        if not act_note.strip():
+            st.error("조치 내용을 입력해 주세요.")
+            return
+        data.record_malfunction_action(
+            malfunction_id, act_at, act_note.strip(), confirmer.strip(),
+        )
+        st.session_state["just_recorded_malfunction_action"] = malfunction_id
         st.rerun()
 
 

@@ -70,18 +70,19 @@ def _build_unified_rows() -> list[UnifiedRow]:
             round_id=(task_round_map.get(d.task_id, "") or "-") if d.task_id else "-",
         ))
 
-    # 별지9 오동작 (별도 row 유지)
+    # 별지9 오동작 (v1.5+: 등록/조치 분리)
     for m in data.load_malfunctions():
+        status = "조치 완료" if m.action_done else "조치 대기"
         rows.append(UnifiedRow(
             type="오동작",
             date=m.occurred_on,
             location=m.category,
             category="—",
             content=m.detail,
-            status=m.action or "-",
+            status=status,
             notice_no="-",
             raw_id=m.malfunction_id,
-            action_done=False,
+            action_done=m.action_done,
             task_id=m.task_id or "-",
             round_id=(task_round_map.get(m.task_id, "") or "-") if m.task_id else "-",
         ))
@@ -141,32 +142,19 @@ def render() -> None:
         )
     # 외부에서 설정된 트리거 (QR deeplink / 시설 관리에서 진입)
     auto_open = st.session_state.get("_open_inspect_dialog", False)
-    auto_open_mal = st.session_state.get("_open_malfunction_dialog", False)
     insp_clicked = False
-    mal_clicked = False
 
     with action_col:
-        b1, b2 = st.columns(2)
-        with b1:
-            if st.button("신규 점검 추가", type="primary",
-                         use_container_width=True, key="open_new_inspection"):
-                insp_clicked = True
-        with b2:
-            if st.button("오동작 등록", use_container_width=True,
-                         key="open_new_malfunction"):
-                mal_clicked = True
+        if st.button("신규 점검 추가", type="primary",
+                     use_container_width=True, key="open_new_inspection"):
+            insp_clicked = True
 
     if st.session_state.pop("just_submitted_inspection", False):
         st.success("점검 결과가 저장되었습니다.")
-    if st.session_state.pop("just_submitted_malfunction", False):
-        st.success("오동작이 별지9에 등록되었습니다.")
 
     if auto_open or insp_clicked:
         st.session_state["_open_inspect_dialog"] = False
         new_inspection_dialog()
-    elif auto_open_mal or mal_clicked:
-        st.session_state["_open_malfunction_dialog"] = False
-        malfunction_dialog()
 
     # [조치 입력] 버튼 트리거 — Deficiency 직접 모달
     open_action = st.session_state.pop("_open_action_input", None)
@@ -176,6 +164,16 @@ def render() -> None:
     just_acted = st.session_state.pop("just_recorded_action", None)
     if just_acted:
         st.success(f"{just_acted} 조치 결과가 저장되었습니다.")
+
+    # 오동작 조치 입력 모달 트리거 (v1.5+)
+    open_mal_action = st.session_state.pop("_open_malfunction_action", None)
+    if open_mal_action:
+        from lib.inspection_dialog import malfunction_action_dialog
+        malfunction_action_dialog(open_mal_action)
+
+    just_mal_acted = st.session_state.pop("just_recorded_malfunction_action", None)
+    if just_mal_acted:
+        st.success(f"{just_mal_acted} 오동작 조치가 저장되었습니다.")
 
     # KPI
     all_rows = _build_unified_rows()
@@ -276,11 +274,16 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
         with cols[9]:
-            # 조치 대기 row에만 "조치 입력 →" 버튼 — 직접 모달 호출
+            # 조치 대기 row에 "조치 입력 →" — 지적사항 / 오동작 분기
             if r.status == "조치 대기" and r.type == "지적사항":
                 if st.button("조치 입력 →", key=f"act_{r.type}_{r.raw_id}",
                              type="primary", use_container_width=True):
                     st.session_state["_open_action_input"] = r.raw_id
+                    st.rerun()
+            elif r.status == "조치 대기" and r.type == "오동작":
+                if st.button("조치 입력 →", key=f"act_{r.type}_{r.raw_id}",
+                             type="primary", use_container_width=True):
+                    st.session_state["_open_malfunction_action"] = r.raw_id
                     st.rerun()
             else:
                 st.markdown("<span style='color:#94A3B8;'>-</span>",
