@@ -106,7 +106,6 @@ def _round_detail_dialog(round_id: str) -> None:
         if st.button("+ Task 추가", key=f"rnd_add_tsk_{round_id}",
                      use_container_width=True):
             add_clicked = True
-    start_for: str | None = None  # [점검 시작] 클릭된 task_id
     if not tasks_active:
         st.info("이 회차에 점검 대상 장비가 없습니다.")
     else:
@@ -144,16 +143,23 @@ def _round_detail_dialog(round_id: str) -> None:
                 unsafe_allow_html=True,
             )
             with row[4]:
-                # 점검 시작 — 완료된 Task는 비활성
+                # 점검 시작 — 회차 모달 안 인라인 펼침 (모달 호출 X)
                 disabled = (t.status == "Completed")
+                inline_key = "round_inline_start_for"
+                is_inline_open = (
+                    st.session_state.get(inline_key) == t.task_id
+                )
                 if st.button(
-                    "점검 시작 →" if not disabled else "점검 완료",
+                    ("닫기" if is_inline_open else
+                     ("점검 시작 →" if not disabled else "점검 완료")),
                     key=f"rnd_start_{t.task_id}",
                     type="primary",
                     use_container_width=True,
                     disabled=disabled,
                 ):
-                    start_for = t.task_id
+                    st.session_state[inline_key] = (
+                        None if is_inline_open else t.task_id
+                    )
             with row[5]:
                 # 제외 폼 토글 (상세 내 인라인 확장)
                 open_key = "round_dlg_exclude_open"
@@ -186,6 +192,13 @@ def _round_detail_dialog(round_id: str) -> None:
                             )
                             st.session_state["round_dlg_exclude_open"] = None
                             st.success(f"{t.task_id} 점검 대상에서 제외했습니다.")
+
+            # 인라인 점검 입력 영역 — [점검 시작 →] 클릭으로 펼침
+            if (st.session_state.get("round_inline_start_for") == t.task_id
+                    and t.status != "Completed"):
+                with st.container(border=True):
+                    from lib.inspection_dialog import task_inspect_inline
+                    task_inspect_inline(t.task_id)
 
             # Completed Task의 점검 결과 inline 카드
             if t.status == "Completed":
@@ -259,11 +272,7 @@ def _round_detail_dialog(round_id: str) -> None:
                     data.restore_task(t.task_id)
                     st.success(f"{t.task_id} 복구했습니다.")
 
-    # [점검 시작] / [+ Task 추가] 버튼이 클릭됐으면 다음 rerun에서 모달 호출
-    # (dialog 안에서 다른 dialog 호출 불가)
-    if start_for:
-        st.session_state["_open_task_inspect"] = start_for
-        st.rerun()
+    # [+ Task 추가] 클릭 시 회차 모달 닫고 외부 모달로 (dialog nesting 불가 회피)
     if add_clicked:
         st.session_state["_open_add_task_to_round"] = round_id
         st.rerun()

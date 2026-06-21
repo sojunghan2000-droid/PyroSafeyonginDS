@@ -779,8 +779,16 @@ def action_input_dialog(deficiency_id: str) -> None:
 
 @st.dialog("점검 시작", width="large")
 def task_inspect_dialog(task_id: str) -> None:
-    """v1.5 Task 단위 모바일 점검 입력 모달.
-    회차 상세 모달의 [점검 시작] 버튼에서 호출."""
+    """task_inspect_inline을 단독 모달로 띄우는 wrapper.
+    회차 상세 모달 외부(예: 시설 관리 QR 모달)에서 진입할 때 사용."""
+    task_inspect_inline(task_id)
+
+
+def task_inspect_inline(task_id: str) -> None:
+    """Task 단위 점검 입력 본문 — 회차 상세 모달 행 아래 인라인으로도, 단독 모달로도 호출 가능.
+    위치 정정 expander 안 도면 spot 선택은 인라인 유지 (모달 분리는 후속).
+
+    이 함수는 데코레이터 없이 호출 가능. 단독 모달로 띄우려면 task_inspect_dialog 사용."""
     t = next((x for x in data.load_tasks() if x.task_id == task_id), None)
     if not t:
         st.error("점검 작업을 찾을 수 없습니다.")
@@ -1154,6 +1162,7 @@ def task_inspect_dialog(task_id: str) -> None:
         if t.round_id:
             _refresh_round_status(t.round_id)
 
+        st.session_state.pop("round_inline_start_for", None)
         st.session_state["just_completed_task"] = t.task_id
         st.rerun()
 
