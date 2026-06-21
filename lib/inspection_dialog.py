@@ -1074,7 +1074,6 @@ def task_inspect_inline(task_id: str) -> None:
         )
         mc1, mc2 = st.columns([1, 1])
         with mc1:
-            from lib.data import MAL_CATEGORIES_TEMP, MAL_CATEGORIES_OTHER
             all_mal_cats = list(MAL_CATEGORIES_TEMP) + list(MAL_CATEGORIES_OTHER)
             default_idx = (
                 all_mal_cats.index(mal_category)
