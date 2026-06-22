@@ -61,7 +61,8 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
             name="기존 spot",
         ))
 
-    # 좌표 픽업용 투명 격자 (50x50 = 2500개) — 클릭 가능 위치
+    # 좌표 픽업용 격자 (50x50 = 2500개) — 살짝 보이는 점 + 호버 안내
+    # 사용자가 클릭 가능 위치를 시각적으로 인지하도록 visible
     grid_x, grid_y = [], []
     for i in range(50):
         for j in range(50):
@@ -70,8 +71,12 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
     fig.add_trace(go.Scatter(
         x=grid_x, y=grid_y,
         mode="markers",
-        marker=dict(size=18, color="rgba(0,0,0,0)"),  # 완전 투명
-        hoverinfo="skip",
+        marker=dict(
+            size=10,
+            color="rgba(59,130,246,0.22)",
+            line=dict(width=0),
+        ),
+        hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
         showlegend=False,
         name="grid",
     ))
@@ -304,7 +309,7 @@ def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | Non
         name="현재 spot", showlegend=False,
     ))
 
-    # 클릭용 투명 격자
+    # 클릭용 격자 — 살짝 보이는 점 + 호버 안내 (속성 변경 모달도 동일 UX)
     grid_x, grid_y = [], []
     for i in range(50):
         for j in range(50):
@@ -313,8 +318,13 @@ def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | Non
     fig.add_trace(go.Scatter(
         x=grid_x, y=grid_y,
         mode="markers",
-        marker=dict(size=18, color="rgba(0,0,0,0)"),
-        hoverinfo="skip", showlegend=False,
+        marker=dict(
+            size=10,
+            color="rgba(59,130,246,0.22)",
+            line=dict(width=0),
+        ),
+        hovertemplate="여기 클릭 → 새 좌표 픽업<extra></extra>",
+        showlegend=False,
         name="grid",
     ))
 
@@ -330,7 +340,7 @@ def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | Non
     return fig
 
 
-@st.dialog("신규 spot 정의", width="large")
+@st.dialog("신규 위치 추가", width="large")
 def _spot_define_dialog() -> None:
     """도면 클릭으로 좌표 픽업 + 속성 입력 + 저장. 위치 마스터 페이지에서 진입."""
     st.markdown(
@@ -455,7 +465,7 @@ def _spot_define_dialog() -> None:
 
 
 def _spot_master_tab() -> None:
-    # 상단 헤더 + [+ 신규 spot] 버튼
+    # 상단 헤더 + [+ 신규 위치 추가] 버튼
     head_l, head_r = st.columns([3, 1])
     with head_l:
         st.markdown(
@@ -465,7 +475,7 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
     with head_r:
-        if st.button("+ 신규 spot 정의", type="primary",
+        if st.button("+ 신규 위치 추가", type="primary",
                      use_container_width=True, key="admin_spot_open_dlg"):
             for k in ("admin_spot_room", "admin_spot_notes",
                       "admin_spot_x", "admin_spot_y"):
