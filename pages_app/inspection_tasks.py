@@ -231,22 +231,29 @@ def _round_detail_dialog(round_id: str) -> None:
                     )
             with row[5]:
                 # 점검 시작 — 회차 모달 안 인라인 펼침 (모달 호출 X)
+                # callback 패턴 — button 그려지기 전에 session_state 갱신되어 같은
+                # rerun에서 라벨/인라인 영역 분기 모두 새 값으로 동기화됨
                 disabled = (t.status == "Completed")
                 inline_key = "round_inline_start_for"
                 is_inline_open = (
                     st.session_state.get(inline_key) == t.task_id
                 )
-                if st.button(
+
+                def _toggle_inline(_tid=t.task_id):
+                    cur = st.session_state.get(inline_key)
+                    st.session_state[inline_key] = (
+                        None if cur == _tid else _tid
+                    )
+
+                st.button(
                     ("닫기" if is_inline_open else
                      ("점검 시작 →" if not disabled else "점검 완료")),
                     key=f"rnd_start_{t.task_id}",
                     type="primary",
                     use_container_width=True,
                     disabled=disabled,
-                ):
-                    st.session_state[inline_key] = (
-                        None if is_inline_open else t.task_id
-                    )
+                    on_click=_toggle_inline,
+                )
             with row[6]:
                 # 제외 폼 토글 (상세 내 인라인 확장)
                 open_key = "round_dlg_exclude_open"
