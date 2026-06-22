@@ -388,8 +388,9 @@ def _spot_define_dialog() -> None:
     if (not locked and event and getattr(event, "selection", None)
             and getattr(event.selection, "points", None)):
         pt = event.selection.points[-1]
-        st.session_state["admin_spot_x"] = round(pt["x"] / FIG_W * 100, 2)
-        st.session_state["admin_spot_y"] = round((FIG_H - pt["y"]) / FIG_H * 100, 2)
+        # number_input widget key와 동일하게 직접 set — 다음 number_input 그려질 때 그 값 사용
+        st.session_state["admin_spot_x_input"] = round(pt["x"] / FIG_W * 100, 2)
+        st.session_state["admin_spot_y_input"] = round((FIG_H - pt["y"]) / FIG_H * 100, 2)
 
     st.markdown(
         "<div style='color:#94A3B8; font-size:0.78rem; margin-top:-0.4rem;'>"
@@ -400,12 +401,17 @@ def _spot_define_dialog() -> None:
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
+    # widget key가 있으면 session_state[key]가 우선 — value는 첫 진입 디폴트
+    if "admin_spot_x_input" not in st.session_state:
+        st.session_state["admin_spot_x_input"] = 50.0
+    if "admin_spot_y_input" not in st.session_state:
+        st.session_state["admin_spot_y_input"] = 50.0
+
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         x_pct = st.number_input(
             "x_pct (도면 폭 %)",
             min_value=0.0, max_value=100.0,
-            value=float(st.session_state.get("admin_spot_x", 50.0)),
             step=0.5, format="%.2f",
             key="admin_spot_x_input",
         )
@@ -413,7 +419,6 @@ def _spot_define_dialog() -> None:
         y_pct = st.number_input(
             "y_pct (도면 높이 %)",
             min_value=0.0, max_value=100.0,
-            value=float(st.session_state.get("admin_spot_y", 50.0)),
             step=0.5, format="%.2f",
             key="admin_spot_y_input",
         )
@@ -440,7 +445,7 @@ def _spot_define_dialog() -> None:
     with bcol1:
         if st.button("취소", use_container_width=True, key="admin_spot_dlg_cancel"):
             for k in ("admin_spot_room", "admin_spot_notes",
-                      "admin_spot_x", "admin_spot_y"):
+                      "admin_spot_x_input", "admin_spot_y_input"):
                 st.session_state.pop(k, None)
             st.rerun()
     with bcol2:
@@ -478,7 +483,7 @@ def _spot_master_tab() -> None:
         if st.button("+ 신규 위치 추가", type="primary",
                      use_container_width=True, key="admin_spot_open_dlg"):
             for k in ("admin_spot_room", "admin_spot_notes",
-                      "admin_spot_x", "admin_spot_y"):
+                      "admin_spot_x_input", "admin_spot_y_input"):
                 st.session_state.pop(k, None)
             _spot_define_dialog()
 
