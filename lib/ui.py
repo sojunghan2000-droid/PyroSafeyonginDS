@@ -95,9 +95,9 @@ THEME_CSS = """
         line-height: 1;
     }
 
-    /* 상단바 알림 벨 — st.button을 상단바 우측에 fixed로 띄움 (아바타 메뉴 옆) */
+    /* 상단바 알림 벨 — 가장 왼쪽 (도움말 ↔ 알림 위치 교환, 폭 차이 보정으로 right 9.5rem) */
     .st-key-notify_btn {
-        position: fixed; top: 13px; right: 5.5rem;
+        position: fixed; top: 13px; right: 9.5rem;
         z-index: 9001;
         width: 52px;
     }
@@ -154,9 +154,9 @@ THEME_CSS = """
         cursor: pointer !important;
     }
 
-    /* 상단바 도움말 버튼 — 알림 벨과 동일 패턴 */
+    /* 상단바 도움말 버튼 — 알림 벨과 자리 교환 (가운데로 이동) */
     .st-key-help_btn {
-        position: fixed; top: 13px; right: 8.5rem;
+        position: fixed; top: 13px; right: 5.5rem;
         z-index: 9001;
         width: 38px;
     }
