@@ -1072,19 +1072,35 @@ def task_inspect_inline(task_id: str) -> None:
             "⚠ 시설 자체의 오작동을 별지9에 기록합니다. "
             "조치는 [작업 조치 관리]에서 별도 시점에 입력하세요."
         )
+        all_mal_cats = list(MAL_CATEGORIES_TEMP) + list(MAL_CATEGORIES_OTHER)
+        auto_mapped = (mal_category in all_mal_cats)
+
         mc1, mc2 = st.columns([1, 1])
         with mc1:
-            all_mal_cats = list(MAL_CATEGORIES_TEMP) + list(MAL_CATEGORIES_OTHER)
-            default_idx = (
-                all_mal_cats.index(mal_category)
-                if mal_category in all_mal_cats else 0
-            )
-            mal_category = st.selectbox(
-                "시설구분 (별지9)",
-                options=all_mal_cats,
-                index=default_idx,
-                key=f"tsk_mal_cat_{task_id}",
-            )
+            if auto_mapped:
+                # 장비 카테고리가 별지9 카테고리에 직접 매핑 — 텍스트만 표시
+                st.markdown(
+                    f"<div style='color:#475569; font-size:0.86rem;'>"
+                    f"<b style='color:#334155;'>시설구분 (별지9)</b><br>"
+                    f"<span style='font-size:0.95rem; color:#0F172A;'>"
+                    f"{mal_category}</span>"
+                    f"<span style='color:#94A3B8; font-size:0.78rem; "
+                    f"margin-left:0.3rem;'>(Task 장비 기준 자동)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                # 별지9에 직접 매핑 없음 — 사용자 선택 필요
+                st.caption(
+                    f"장비({mal_category})가 별지9 카테고리에 직접 매핑되지 않습니다. "
+                    "분류를 선택해 주세요."
+                )
+                mal_category = st.selectbox(
+                    "시설구분 (별지9)",
+                    options=all_mal_cats,
+                    index=0,
+                    key=f"tsk_mal_cat_{task_id}",
+                )
         with mc2:
             mal_occurred = st.date_input(
                 "발생일자", value=inspect_date,
