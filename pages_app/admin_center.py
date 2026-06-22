@@ -478,15 +478,19 @@ def _spot_master_tab() -> None:
 
     floor = st.selectbox(
         "층 선택",
-        options=ADMIN_FLOORS,
+        options=["전체"] + list(ADMIN_FLOORS),
         key="admin_spot_floor",
     )
-    spots = data.load_spots(floor)
+    spots = data.load_spots() if floor == "전체" else data.load_spots(floor)
 
-    # --- 이 층의 spot 목록 + 편집/삭제 ---
+    # --- spot 목록 + 편집/삭제 ---
+    list_title = (
+        f"전체 spot 목록 ({len(spots)}건)" if floor == "전체"
+        else f"{floor}층 spot 목록 ({len(spots)}건)"
+    )
     st.markdown(
         f"<div style='margin-top:0.6rem; font-weight:700; color:#0F172A; font-size:1.02rem;'>"
-        f"이 층의 spot 목록 ({len(spots)}건)</div>",
+        f"{list_title}</div>",
         unsafe_allow_html=True,
     )
     if not spots:
@@ -514,9 +518,15 @@ def _spot_master_tab() -> None:
             "border-radius:6px; font-size:0.68rem; font-weight:700;'>신규</span>"
             if s.is_temporary else ""
         )
+        floor_badge = (
+            f" <span style='background:#F1F5F9; color:#475569; "
+            f"padding:0.05rem 0.4rem; border-radius:6px; "
+            f"font-size:0.68rem; font-weight:600;'>{s.floor}</span>"
+            if floor == "전체" else ""
+        )
         row[0].markdown(
             f"<span style='font-weight:600; color:#0F172A;'>{s.spot_id}</span>"
-            f"{temp_badge}",
+            f"{floor_badge}{temp_badge}",
             unsafe_allow_html=True,
         )
         row[1].markdown(s.room_name)
