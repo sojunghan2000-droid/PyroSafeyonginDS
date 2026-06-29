@@ -35,7 +35,7 @@ create table if not exists public.inspection_tasks (
   created_at      timestamptz not null default now()
 );
 
--- 3) 별지5 지적사항
+-- 3) 별지5 지적사항 (v1.5: 별지6 조치 단계 흡수 / v1.5+: 불량 사유 카탈로그)
 create table if not exists public.deficiencies (
   deficiency_id    text primary key,
   inspection_date  date not null,
@@ -47,6 +47,14 @@ create table if not exists public.deficiencies (
   resolution       text not null,                    -- 완료 | 불가
   confirmer        text,
   notice_no        text,
+  task_id          text,                             -- v1.5: 점검 회차 Task FK
+  submitter        text,                             -- v1.5: 점검자(발급자)
+  action_done      boolean not null default false,   -- v1.5: 조치 완료 여부
+  action_at        date,
+  action_note      text not null default '',
+  action_photo_path text,
+  defect_codes     text[] not null default '{}',     -- v1.5+: 불량 사유 코드 (multiselect)
+  defect_other     text not null default '',         -- v1.5+: "기타" 선택 시 상세
   created_at       timestamptz not null default now()
 );
 
@@ -68,7 +76,7 @@ create table if not exists public.notices (
   created_at        timestamptz not null default now()
 );
 
--- 5) 별지9 오동작
+-- 5) 별지9 오동작 (v1.5+: 등록/조치 분리)
 create table if not exists public.malfunctions (
   malfunction_id text primary key,
   category       text not null,
@@ -76,6 +84,10 @@ create table if not exists public.malfunctions (
   detail         text not null,
   action         text not null default '',
   confirmer      text not null default '',
+  task_id        text,                                -- v1.5+: 점검 회차 Task FK
+  action_done    boolean not null default false,      -- v1.5+: 조치 완료 여부
+  action_at      date,
+  action_note    text not null default '',
   created_at     timestamptz not null default now()
 );
 

@@ -73,9 +73,10 @@ class Spot:
     is_temporary: bool = False
 
 
-# 점검 회차 등록 시 사용하는 운영 주기 카탈로그 (v1.5+)
+# 점검 회차 등록 시 사용하는 운영 주기 카탈로그 (v1.5+ / v1.6: 일일 점검 추가)
 # 시설 종류와는 직교 — 한 회차에 여러 시설이 포함될 수 있음.
 TASK_INSPECTION_TYPES = [
+    "일일 점검",   # v1.6: 화기작업구간 점검용 — 작업 시작 전/중 수시
     "주간 점검",
     "월간 점검",
     "분기 점검",
@@ -103,6 +104,46 @@ INSPECTION_TYPE_CATEGORY_DEFAULTS: dict[str, list[str]] = {
 
 def default_inspection_types_for(category: str) -> list[str]:
     return list(INSPECTION_TYPE_CATEGORY_DEFAULTS.get(category, []))
+
+
+# ---------- v1.6: 신규 점검 종류 카탈로그 (별지5 양식 inspection_types) ----------
+# 화기작업·가설컨테이너 점검은 기존 3종(임시소방시설/피난로 등/화기취급감독)과 별개.
+# 각 점검 종류에 매핑된 "불량 사유" 카탈로그를 가져 multiselect 입력에 사용.
+
+INSPECTION_KIND_FIRE_WORK = "화기작업구간 점검"
+INSPECTION_KIND_CONTAINER = "가설컨테이너 사무실 점검"
+
+# 화기작업구간 점검 — 불량 사유 6종
+DEFECT_CODES_FIRE_WORK = [
+    "방화포 미비치 또는 파손",
+    "소화기 부족/충전 부족/고장",
+    "화재감시자 부재 또는 불안전한 행동",
+    "가연물 정리정돈 미흡",
+    "주변 간섭사항 존재",
+    "기타",
+]
+
+# 가설컨테이너 사무실 점검 — 불량 사유 7종
+DEFECT_CODES_CONTAINER = [
+    "소화기 비치·점검 불량",
+    "환기팬 설치/작동 불량",
+    "외부 차단기·시건 상태 불량",
+    "감지기 작동 불량",
+    "접지 불량",
+    "철제쓰레기통 미사용·인화성물질 보관 불량",
+    "기타",
+]
+
+# 점검 종류 → 불량 사유 카탈로그 매핑 (v1.6)
+DEFECT_CODE_CATALOG: dict[str, list[str]] = {
+    INSPECTION_KIND_FIRE_WORK: DEFECT_CODES_FIRE_WORK,
+    INSPECTION_KIND_CONTAINER: DEFECT_CODES_CONTAINER,
+}
+
+
+def defect_codes_for(inspection_kind: str) -> list[str]:
+    """주어진 점검 종류의 불량 사유 카탈로그. 매핑 없으면 빈 리스트."""
+    return list(DEFECT_CODE_CATALOG.get(inspection_kind, []))
 
 
 @dataclass
@@ -138,7 +179,8 @@ class InspectionRound:
 @dataclass
 class Deficiency:
     """별지5 안전점검 결과 지적내역서 row.
-    v1.5: 별지6 통보서의 조치 단계 필드를 흡수 (action_*, submitter)."""
+    v1.5: 별지6 통보서의 조치 단계 필드를 흡수 (action_*, submitter).
+    v1.6: 화기작업·가설컨테이너 점검을 위한 불량 사유 카탈로그 (defect_codes/defect_other)."""
     deficiency_id: str
     inspection_date: date
     inspector: str
@@ -156,6 +198,13 @@ class Deficiency:
     action_note: str = ""
     action_photo_path: str | None = None
     submitter: str | None = None
+    # v1.6: 불량 사유 카탈로그 (multiselect) + 기타 상세
+    defect_codes: list[str] = None  # type: ignore[assignment]
+    defect_other: str = ""
+
+    def __post_init__(self) -> None:
+        if self.defect_codes is None:
+            self.defect_codes = []
 
 
 @dataclass
@@ -316,6 +365,8 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         action_note=r.get("action_note") or "",
         action_photo_path=r.get("action_photo_path"),
         submitter=r.get("submitter"),
+        defect_codes=list(r.get("defect_codes") or []),  # v1.6
+        defect_other=r.get("defect_other") or "",        # v1.6
     )
 
 
@@ -687,6 +738,8 @@ def add_deficiency(d: Deficiency) -> None:
         "action_note": d.action_note,
         "action_photo_path": d.action_photo_path,
         "submitter": d.submitter,
+        "defect_codes": list(d.defect_codes or []),  # v1.6
+        "defect_other": d.defect_other or "",        # v1.6
     }).execute()
     _deficiency_rows.clear()
 

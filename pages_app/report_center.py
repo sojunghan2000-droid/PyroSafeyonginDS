@@ -126,9 +126,26 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
             f"• {t}( {'O' if t in d.inspection_types else '&nbsp;'} )" for t in types_all
         ]
         # 지적사항 컬럼 형식: "장비명 (양호 또는 지적내용)" — v1.5+
+        # v1.6: defect_codes 카탈로그가 있으면 "불량 — 사유: ..." 형태로 명시
         eq_label = task_label_map.get(d.task_id, "")
         is_good = (d.resolution == "완료" and not d.notice_no)
-        body = "양호" if is_good else (d.issue or "지적사항 없음")
+        if is_good:
+            body = "양호"
+        elif d.defect_codes:
+            codes_display = [
+                c if c != "기타" else (f"기타: {d.defect_other}" if d.defect_other else "기타")
+                for c in d.defect_codes
+            ]
+            reasons = " · ".join(codes_display)
+            # issue가 사유 join + ' — 추가내용' 형식이면 추가내용만 분리해 덧붙임
+            extra = ""
+            if d.issue and " — " in d.issue:
+                extra = d.issue.split(" — ", 1)[1].strip()
+            body = f"불량 — 사유: {reasons}"
+            if extra:
+                body = f"{body} ({extra})"
+        else:
+            body = d.issue or "지적사항 없음"
         issue_text = f"{eq_label} ({body})" if eq_label else body
         rows.append([
             Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),

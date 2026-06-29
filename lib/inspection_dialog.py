@@ -34,7 +34,11 @@ EQ_CATEGORIES = [
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
 
 
-INSPECTION_TYPES = ["임시소방시설", "피난로 등", "화기취급감독"]
+INSPECTION_TYPES = [
+    "임시소방시설", "피난로 등", "화기취급감독",
+    # v1.6: 신규 점검 종류 (불량 사유 카탈로그 보유)
+    "화기작업구간 점검", "가설컨테이너 사무실 점검",
+]
 
 # 별지9 카테고리 (임시소방시설 6종 + 그 외 6종)
 MAL_CATEGORIES_TEMP = ["소화기", "간이소화장치", "비상경보장치",
@@ -592,10 +596,13 @@ def add_task_to_round_dialog(round_id: str) -> None:
                  if e.location_id not in already_locs and not _is_match(e)]
     candidates = matched + unmatched  # 매칭 우선 정렬
 
-    # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 (모바일 친화)
-    tab_pick, tab_qr, tab_map = st.tabs(["직접 선택", "QR 스캔", "📍 도면 선택"])
+    # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 / 🔥 화기작업 구간 (v1.6)
+    tab_pick, tab_qr, tab_map, tab_free = st.tabs(
+        ["직접 선택", "QR 스캔", "📍 도면 선택", "🔥 화기작업 구간"]
+    )
     sel_eq = None        # Equipment (장비 기반 추가)
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
+    free_work_meta = None  # v1.6: 화기작업 구간 자유 입력 ({floor, work_zone, vendor})
     with tab_pick:
         eq_idx = st.selectbox(
             "추가할 장비 (매칭 우선 · 매핑 외 장비도 자유 추가 가능)",
@@ -669,24 +676,67 @@ def add_task_to_round_dialog(round_id: str) -> None:
             else:
                 sel_eq = picked["data"]
 
+    # v1.6: 화기작업 구간 자유 입력 — spot/장비 없이 작업 위치를 텍스트로 직접 입력
+    with tab_free:
+        st.caption(
+            "💡 작업 구간이 도면에 spot으로 정의되지 않은 경우 사용. "
+            "층 + 작업 구간 + 업체를 자유 입력하면 Task가 생성됩니다."
+        )
+        EQ_FLOORS_LIST = list(EQ_FLOORS)
+        fw_c1, fw_c2 = st.columns([1, 2])
+        with fw_c1:
+            fw_floor = st.selectbox(
+                "층 *",
+                options=EQ_FLOORS_LIST,
+                key=f"add_tsk_fw_floor_{round_id}",
+            )
+        with fw_c2:
+            fw_zone = st.text_input(
+                "작업 구간 설명 *",
+                key=f"add_tsk_fw_zone_{round_id}",
+                placeholder="예: SEC1 EL+15m 배관 용접 / B동 옥상 그라인더 작업",
+            )
+        fw_vendor = st.text_input(
+            "작업 업체 (선택)",
+            key=f"add_tsk_fw_vendor_{round_id}",
+            placeholder="예: ㈜한신건설",
+        )
+        if fw_floor and fw_zone.strip():
+            label_extra = f" · {fw_vendor.strip()}" if fw_vendor.strip() else ""
+            free_work_meta = {
+                "floor": fw_floor,
+                "zone": fw_zone.strip(),
+                "label": f"{fw_floor} / {fw_zone.strip()}{label_extra}",
+            }
+            st.success(f"➕ {free_work_meta['label']}")
+
     note = st.text_input(
         "메모(선택)",
         key=f"add_tsk_note_{round_id}",
         placeholder=r.note,
     )
 
-    has_selection = sel_eq is not None or sel_empty_spot is not None
+    has_selection = (
+        sel_eq is not None
+        or sel_empty_spot is not None
+        or free_work_meta is not None
+    )
     if st.button(
         "추가", type="primary", use_container_width=True,
         key=f"add_tsk_submit_{round_id}",
         disabled=not has_selection,
     ):
         if not has_selection:
-            st.error("장비를 선택하거나 QR을 인식하거나 빈 spot을 골라 주세요.")
+            st.error("장비/QR/spot/작업 구간 중 하나는 입력해 주세요.")
             return
         from lib.data import next_task_id, add_task, _refresh_round_status
         new_tsk = next_task_id()
-        if sel_empty_spot is not None:
+        if free_work_meta is not None:
+            # v1.6: 화기작업 구간 자유 입력 — spot/장비 없음
+            equipment_label = f"{free_work_meta['label']} (화기작업)"
+            floor = free_work_meta["floor"]
+            zone = free_work_meta["zone"]
+        elif sel_empty_spot is not None:
             # spot 기반 — 장비 없이 spot 정보만 사용 (임시/정식 구분)
             spot_tag = (
                 "(신규 위치)" if sel_empty_spot.is_temporary else "(빈 spot)"
@@ -1113,12 +1163,52 @@ def task_inspect_inline(task_id: str) -> None:
             key=f"tsk_mal_detail_{task_id}",
         )
 
+    # v1.6: 점검 종류 매칭되는 불량 사유 카탈로그 (화기작업/가설컨테이너)
+    # types_selected에서 카탈로그 보유 종류가 하나라도 있으면 그것의 사유 카탈로그를 사용
+    defect_codes_selected: list[str] = []
+    defect_other_text = ""
+    matching_kind_for_codes = next(
+        (k for k in types_selected if k in data.DEFECT_CODE_CATALOG),
+        None,
+    )
+
     if result == "불량":
         issue = st.text_area(
-            "지적사항",
+            "지적사항 (선택)",
             placeholder="예: 1-A계단 피난구 유도등 점등 불량",
             key=f"tsk_issue_{task_id}",
         )
+
+        # v1.6: 점검 종류가 카탈로그 보유 종류면 사유 multiselect 노출
+        if matching_kind_for_codes:
+            st.caption(
+                f"📋 **{matching_kind_for_codes}** — 불량 사유 카탈로그가 적용됩니다 (복수 선택 가능)"
+            )
+            defect_codes_selected = st.multiselect(
+                "불량 사유 *",
+                options=data.defect_codes_for(matching_kind_for_codes),
+                key=f"tsk_dcodes_{task_id}",
+                placeholder="해당 사유를 모두 선택해주세요",
+            )
+            if "기타" in defect_codes_selected:
+                defect_other_text = st.text_input(
+                    "기타 — 상세 내용 *",
+                    key=f"tsk_dother_{task_id}",
+                    placeholder="기타 선택 시 구체 내용 필수",
+                )
+
+        # 불량 조치 사진 — 의무화 (v1.6)
+        st.markdown(
+            "<div style='color:#DC2626; font-size:0.82rem; font-weight:600; margin-top:0.4rem;'>"
+            "📷 조치 사진 — 필수 첨부</div>",
+            unsafe_allow_html=True,
+        )
+        action_photo_now = photo_input(
+            "조치 사진 *",
+            key=f"tsk_act_photo_{task_id}",
+            help_text="불량 시 사진 첨부 필수. 모바일은 카메라 촬영 탭으로 즉시 촬영.",
+        )
+
         action_immediate = st.checkbox(
             "현장에서 즉시 조치 완료 (선택)",
             value=False,
@@ -1135,11 +1225,6 @@ def task_inspect_inline(task_id: str) -> None:
                 "조치 내용",
                 placeholder="예: 적재물 이동 완료, 전구 교체 등",
                 key=f"tsk_act_note_{task_id}",
-            )
-            action_photo_now = photo_input(
-                "조치 사진 (선택)",
-                key=f"tsk_act_photo_{task_id}",
-                help_text="모바일은 카메라 촬영 탭으로 즉시 촬영.",
             )
         else:
             st.caption(
@@ -1185,25 +1270,55 @@ def task_inspect_inline(task_id: str) -> None:
         if not types_selected:
             st.error("점검 종류를 1개 이상 선택해 주세요.")
             return
-        if result == "불량" and not issue.strip():
-            st.error("불량이면 지적사항을 입력해 주세요.")
-            return
+
+        # v1.6: 불량 시 검증 강화
+        if result == "불량":
+            # 사유 카탈로그 적용 종류면 최소 1개 선택 필수
+            if matching_kind_for_codes and not defect_codes_selected:
+                st.error(f"{matching_kind_for_codes} — 불량 사유를 1개 이상 선택해 주세요.")
+                return
+            # 기타 선택 시 상세 텍스트 필수
+            if "기타" in defect_codes_selected and not defect_other_text.strip():
+                st.error("기타를 선택했으면 상세 내용을 입력해 주세요.")
+                return
+            # 조치 사진 필수 (v1.6)
+            if not action_photo_now:
+                st.error("불량 시 조치 사진은 필수입니다. 첨부 후 다시 제출해 주세요.")
+                return
+            # 사유 카탈로그가 없는 종류일 때만 지적사항 텍스트 필수
+            if not matching_kind_for_codes and not issue.strip():
+                st.error("불량이면 지적사항을 입력해 주세요.")
+                return
 
         # 통보서 번호 (불량일 때만 발급)
         new_no = None
         if result == "불량":
             new_no = next_notice_no(inspect_date)
 
-        # Deficiency row 생성 (v1.5: 조치 단계 포함)
+        # 사진 업로드 — v1.6: 불량 시 항상, 양호 시 없음
         photo_bytes = (
             action_photo_now.getvalue()
-            if (action_photo_now and action_immediate)
+            if (action_photo_now and result == "불량")
             else None
         )
         new_def_id = data.next_deficiency_id()
         photo_path = None
         if photo_bytes:
             photo_path = data._upload_action_photo(new_def_id, photo_bytes)
+
+        # issue 텍스트 — 사유 카탈로그가 있으면 사유 요약, 없으면 자유 입력
+        if result == "불량" and matching_kind_for_codes:
+            codes_display = list(defect_codes_selected)
+            if "기타" in codes_display and defect_other_text.strip():
+                codes_display = [
+                    c if c != "기타" else f"기타: {defect_other_text.strip()}"
+                    for c in codes_display
+                ]
+            issue_final = " · ".join(codes_display)
+            if issue.strip():
+                issue_final = f"{issue_final} — {issue.strip()}"
+        else:
+            issue_final = issue.strip() or "양호"
 
         # 사용 영역: 정정값이 있으면 그것을 우선, 아니면 장비/Task 정보 사용
         floor = override_floor
@@ -1214,7 +1329,7 @@ def task_inspect_inline(task_id: str) -> None:
             inspector=inspector,
             floor=floor, zone=zone,
             inspection_types=types_selected,  # type: ignore[arg-type]
-            issue=issue.strip() or "양호",
+            issue=issue_final,
             resolution=(
                 "완료" if (result == "양호" or action_immediate) else "불가"
             ),  # type: ignore[arg-type]
@@ -1226,6 +1341,8 @@ def task_inspect_inline(task_id: str) -> None:
             action_note=action_note_now.strip() if action_immediate else "",
             action_photo_path=photo_path,
             submitter=inspector,
+            defect_codes=defect_codes_selected,  # v1.6
+            defect_other=defect_other_text.strip(),  # v1.6
         ))
 
         # 장비 health_status 갱신 (있으면)
@@ -1546,13 +1663,23 @@ def task_dialog() -> None:
 
     resolved_type = (custom_type.strip() if type_choice == "기타" else type_choice)
 
+    # v1.6: 일일 점검(화기작업구간 점검 의도)은 작업 구간을 매번 새로 잡아야 하므로
+    # 자유 등록 모드를 기본 ON으로 자동 활성화. 사용자가 풀어 다시 선택할 수도 있음.
+    is_daily = (type_choice == "일일 점검")
+    if is_daily and not st.session_state.get("_task_dlg_daily_seeded"):
+        st.session_state["task_dlg_free_mode"] = True
+        st.session_state["_task_dlg_daily_seeded"] = True
+    elif not is_daily:
+        st.session_state.pop("_task_dlg_daily_seeded", None)
+
     # v1.5: 자유 점검 옵션 — 대상을 미리 선택하지 않고 점검 시작 시 정하는 방식
     free_mode = st.checkbox(
         "대상 미선택 (자유 점검) — 회차만 만들고 점검 시작 시 장비를 선택",
         key="task_dlg_free_mode",
         help=(
             "체크 시 회차 1건만 만들고 Task는 0개입니다. "
-            "점검자가 안전점검 → [신규 Task 추가] 로 그때그때 등록 가능."
+            "점검자가 안전점검 → [신규 Task 추가] 로 그때그때 등록 가능. "
+            "일일 점검(화기작업구간) 선택 시 자동 활성화 — 작업 구간은 매번 자유 입력."
         ),
     )
 
