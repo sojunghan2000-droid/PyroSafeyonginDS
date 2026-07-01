@@ -35,7 +35,7 @@ create table if not exists public.inspection_tasks (
   created_at      timestamptz not null default now()
 );
 
--- 3) 별지5 지적사항 (v1.5: 별지6 조치 단계 흡수 / v1.5+: 불량 사유 카탈로그)
+-- 3) 별지5 지적사항 (v1.5: 별지6 조치 단계 흡수 / v1.5+: 불량 사유 카탈로그 / v1.7: 세부 checklist)
 create table if not exists public.deficiencies (
   deficiency_id    text primary key,
   inspection_date  date not null,
@@ -55,6 +55,7 @@ create table if not exists public.deficiencies (
   action_photo_path text,
   defect_codes     text[] not null default '{}',     -- v1.5+: 불량 사유 코드 (multiselect)
   defect_other     text not null default '',         -- v1.5+: "기타" 선택 시 상세
+  checklist_items  jsonb not null default '{}',      -- v1.7: 세부 항목별 상태 (OK/NG/NA)
   created_at       timestamptz not null default now()
 );
 

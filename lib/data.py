@@ -146,6 +146,72 @@ def defect_codes_for(inspection_kind: str) -> list[str]:
     return list(DEFECT_CODE_CATALOG.get(inspection_kind, []))
 
 
+# ---------- v1.7: 세부 점검 checklist 카탈로그 ----------
+# 각 점검 종류의 상세 점검 항목을 카테고리별로 정의. 점검자는 각 항목에 대해
+# OK / NG / NA(해당없음)를 기록. NG가 하나라도 있으면 자동으로 결과 "불량" 힌트.
+
+# 화기작업구간 점검 — 4 카테고리 × 3 세부 = 12개
+CHECKLIST_FIRE_WORK: dict[str, list[str]] = {
+    "방화포·소화기 비치": [
+        "방화포 즉시 사용 가능 상태 비치",
+        "소화기 인근 충분 비치",
+        "방화포·소화기 상태 점검 통과 (손상·충전 압력)",
+    ],
+    "화재감시자 업무 숙련도": [
+        "전담 감시자 배치",
+        "업무 인지·숙련",
+        "감시 위치 적절 (구간 조망 가능)",
+    ],
+    "가연물 정리정돈": [
+        "반경 내 가연물 제거 또는 방화포 보양",
+        "우발 접촉 위험 없이 정돈",
+        "작업구간·주변 청소 상태",
+    ],
+    "주변 간섭사항": [
+        "인접 지역 다른 공사 없음",
+        "통행 차단·표시",
+        "환기 충분 (연기·가스 정체 없음)",
+    ],
+}
+
+# 가설컨테이너 사무실 점검 — 7개 항목 (카테고리 없이 단일 리스트)
+CHECKLIST_CONTAINER: list[str] = [
+    "소화기 비치·점검 상태 (내부 확산 + 외부 3.3kg)",
+    "환기팬 설치기준 준수 (철제 팬·전원버튼)",
+    "외부 차단기 설치 + 차단기함 시건",
+    "감지기 작동 상태",
+    "접지 상태",
+    "철제쓰레기통 사용 + 인화성물질 보관",
+    "일일점검체크리스트 작성",
+]
+
+
+def checklist_for(inspection_kind: str) -> dict[str, list[str]] | list[str] | None:
+    """주어진 점검 종류의 세부 checklist 카탈로그.
+    화기작업 → dict (카테고리별 항목 리스트)
+    가설컨테이너 → list (단일 리스트)
+    매핑 없음 → None
+    """
+    if inspection_kind == INSPECTION_KIND_FIRE_WORK:
+        return CHECKLIST_FIRE_WORK
+    if inspection_kind == INSPECTION_KIND_CONTAINER:
+        return CHECKLIST_CONTAINER
+    return None
+
+
+def checklist_flat_keys(inspection_kind: str) -> list[str]:
+    """checklist_items dict의 키 목록을 평탄화해 반환.
+    화기작업: '카테고리|항목' 형식.
+    가설컨테이너: 항목 그대로.
+    """
+    catalog = checklist_for(inspection_kind)
+    if catalog is None:
+        return []
+    if isinstance(catalog, dict):
+        return [f"{cat}|{item}" for cat, items in catalog.items() for item in items]
+    return list(catalog)
+
+
 @dataclass
 class InspectionTask:
     task_id: str
@@ -201,10 +267,14 @@ class Deficiency:
     # v1.6: 불량 사유 카탈로그 (multiselect) + 기타 상세
     defect_codes: list[str] = None  # type: ignore[assignment]
     defect_other: str = ""
+    # v1.7: 세부 checklist 항목별 상태 — {"카테고리|항목" or "항목": "OK"|"NG"|"NA"}
+    checklist_items: dict[str, str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.defect_codes is None:
             self.defect_codes = []
+        if self.checklist_items is None:
+            self.checklist_items = {}
 
 
 @dataclass
@@ -367,6 +437,7 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         submitter=r.get("submitter"),
         defect_codes=list(r.get("defect_codes") or []),  # v1.6
         defect_other=r.get("defect_other") or "",        # v1.6
+        checklist_items=dict(r.get("checklist_items") or {}),  # v1.7
     )
 
 
@@ -740,6 +811,7 @@ def add_deficiency(d: Deficiency) -> None:
         "submitter": d.submitter,
         "defect_codes": list(d.defect_codes or []),  # v1.6
         "defect_other": d.defect_other or "",        # v1.6
+        "checklist_items": dict(d.checklist_items or {}),  # v1.7
     }).execute()
     _deficiency_rows.clear()
 

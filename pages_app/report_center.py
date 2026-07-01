@@ -127,8 +127,17 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
         ]
         # 지적사항 컬럼 형식: "장비명 (양호 또는 지적내용)" — v1.5+
         # v1.6: defect_codes 카탈로그가 있으면 "불량 — 사유: ..." 형태로 명시
+        # v1.7: checklist_items의 NG 항목을 요약해 함께 표시
         eq_label = task_label_map.get(d.task_id, "")
         is_good = (d.resolution == "완료" and not d.notice_no)
+        # NG 항목 추출: "카테고리|항목" 또는 "항목" 형식 키에서 "|" 이후만 사용
+        ng_items = []
+        ci = getattr(d, "checklist_items", None) or {}
+        for k, v in ci.items():
+            if str(v).upper() == "NG":
+                label = k.split("|", 1)[1] if "|" in k else k
+                ng_items.append(label)
+        ng_summary = ", ".join(ng_items)
         if is_good:
             body = "양호"
         elif d.defect_codes:
@@ -144,6 +153,10 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
             body = f"불량 — 사유: {reasons}"
             if extra:
                 body = f"{body} ({extra})"
+            if ng_summary:
+                body = f"{body} [NG: {ng_summary}]"
+        elif ng_summary:
+            body = f"불량 — NG: {ng_summary}"
         else:
             body = d.issue or "지적사항 없음"
         issue_text = f"{eq_label} ({body})" if eq_label else body

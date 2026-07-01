@@ -1098,6 +1098,63 @@ def task_inspect_inline(task_id: str) -> None:
         placeholder="해당 점검종류를 선택하세요 (복수 가능)",
     )
 
+    # v1.7: 세부 checklist — 점검 종류가 카탈로그 보유 종류면 렌더링
+    # 첫 카탈로그 매칭 종류 기준. 각 항목 OK/NG/NA 라디오.
+    checklist_kind = next(
+        (k for k in types_selected if data.checklist_for(k) is not None),
+        None,
+    )
+    checklist_items: dict[str, str] = {}
+    checklist_has_ng = False
+    if checklist_kind:
+        catalog = data.checklist_for(checklist_kind)
+        st.markdown(
+            f"<div style='background:#EFF6FF; border:1px solid #BFDBFE; "
+            f"border-radius:8px; padding:0.5rem 0.75rem; margin:0.4rem 0; "
+            f"color:#1E40AF; font-size:0.85rem;'>"
+            f"📋 <b>{checklist_kind}</b> — 세부 항목별 점검 (OK / NG / N/A)"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        def _chk_radio(key_id: str, label: str) -> str:
+            # NG 자주 씀 → 명확성 위해 라디오. 기본 OK
+            return st.radio(
+                label,
+                options=["OK", "NG", "N/A"],
+                horizontal=True,
+                key=f"tsk_chk_{task_id}_{key_id}",
+                label_visibility="visible",
+            )
+
+        if isinstance(catalog, dict):
+            # 화기작업 — 카테고리별
+            for cat, items in catalog.items():
+                st.markdown(
+                    f"<div style='font-weight:600; color:#0F172A; "
+                    f"font-size:0.86rem; margin-top:0.4rem;'>· {cat}</div>",
+                    unsafe_allow_html=True,
+                )
+                for it in items:
+                    key = f"{cat}|{it}"
+                    val = _chk_radio(key, it)
+                    checklist_items[key] = val
+                    if val == "NG":
+                        checklist_has_ng = True
+        else:
+            # 가설컨테이너 — 단일 리스트
+            for it in catalog:
+                val = _chk_radio(it, it)
+                checklist_items[it] = val
+                if val == "NG":
+                    checklist_has_ng = True
+
+        if checklist_has_ng:
+            st.warning(
+                "⚠ NG 항목이 있습니다. 아래 결과를 **불량**으로 선택하고 "
+                "사유 카탈로그·조치 사진을 첨부해 주세요."
+            )
+
     st.markdown(
         "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
         "점검 결과</b>",
@@ -1271,6 +1328,14 @@ def task_inspect_inline(task_id: str) -> None:
             st.error("점검 종류를 1개 이상 선택해 주세요.")
             return
 
+        # v1.7: NG 항목이 있는데 결과가 "양호"면 저장 차단
+        if checklist_kind and checklist_has_ng and result == "양호":
+            st.error(
+                "세부 checklist에 NG 항목이 있습니다. 결과를 '불량'으로 선택하고 "
+                "사유 카탈로그·조치 사진을 첨부해 주세요."
+            )
+            return
+
         # v1.6: 불량 시 검증 강화
         if result == "불량":
             # 사유 카탈로그 적용 종류면 최소 1개 선택 필수
@@ -1343,6 +1408,7 @@ def task_inspect_inline(task_id: str) -> None:
             submitter=inspector,
             defect_codes=defect_codes_selected,  # v1.6
             defect_other=defect_other_text.strip(),  # v1.6
+            checklist_items=checklist_items,  # v1.7
         ))
 
         # 장비 health_status 갱신 (있으면)
