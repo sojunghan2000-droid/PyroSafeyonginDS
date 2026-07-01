@@ -607,6 +607,10 @@ def add_task_to_round_dialog(round_id: str) -> None:
             "등록된 장비를 **목록** 또는 **QR 스캔**으로 선택합니다. "
             "장비의 층·구역은 이미 설정되어 있어 자동 반영됩니다."
         )
+        st.caption(
+            "💡 도면에 정의되지 않은 작업 구간(화기작업 등)은 "
+            "**📍 도면 선택 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
+        )
 
         # 1) 목록에서 직접 선택 (기본 경로)
         st.markdown("**① 목록에서 선택**")
@@ -686,12 +690,6 @@ def add_task_to_round_dialog(round_id: str) -> None:
                 sel_eq = None  # 빈 spot은 장비 없음
             else:
                 sel_eq = picked["data"]
-
-    # 화기작업 구간처럼 도면에 spot이 없는 위치는 '📍 도면 선택 → 🆕 신규 위치 추가'로 등록
-    st.caption(
-        "💡 도면에 정의되지 않은 작업 구간(화기작업 등)은 "
-        "**📍 도면 선택 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
-    )
 
     note = st.text_input(
         "메모(선택)",
