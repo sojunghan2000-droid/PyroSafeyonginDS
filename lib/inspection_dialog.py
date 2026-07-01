@@ -604,17 +604,33 @@ def add_task_to_round_dialog(round_id: str) -> None:
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
     with tab_eq:
         st.caption(
-            "등록된 장비를 **QR 스캔** 또는 **목록**에서 선택합니다. "
+            "등록된 장비를 **목록** 또는 **QR 스캔**으로 선택합니다. "
             "장비의 층·구역은 이미 설정되어 있어 자동 반영됩니다."
         )
 
-        # 1) QR 스캔 (모바일 우선)
-        st.markdown("**① QR 스캔** (선택)")
+        # 1) 목록에서 직접 선택 (기본 경로)
+        st.markdown("**① 목록에서 선택**")
+        eq_idx = st.selectbox(
+            "추가할 장비 (매칭 우선 · 매핑 외 장비도 자유 추가 가능)",
+            options=range(len(candidates)),
+            format_func=lambda i: (
+                f"{'✓' if _is_match(candidates[i]) else '·'} "
+                f"{candidates[i].location_id} · {candidates[i].equipment_name} "
+                f"({candidates[i].category})"
+            ),
+            key=f"add_tsk_eq_{round_id}",
+        )
+        sel_eq = candidates[eq_idx] if candidates else None
+
+        st.divider()
+
+        # 2) QR 스캔 (모바일 · 인식 시 목록 선택보다 우선 적용)
+        st.markdown("**② QR 스캔** (선택)")
         try:
             from streamlit_qrcode_scanner import qrcode_scanner
             qr_val = qrcode_scanner(key=f"add_tsk_qr_{round_id}")
         except Exception as e:
-            st.caption(f"QR 스캐너를 불러올 수 없습니다 ({e}). 아래 목록에서 선택하세요.")
+            st.caption(f"QR 스캐너를 불러올 수 없습니다 ({e}). 위 목록에서 선택하세요.")
             qr_val = None
         manual = st.text_input(
             "수동 입력 (EQ-NNNN 또는 QR 페이로드 URL)",
@@ -635,22 +651,6 @@ def add_task_to_round_dialog(round_id: str) -> None:
             return m.group(0) if m else None
 
         eq_id = _extract(qr_val) or _extract(manual)
-
-        st.divider()
-
-        # 2) 목록에서 직접 선택 (QR 미인식 시 기본 경로)
-        st.markdown("**② 목록에서 선택**")
-        eq_idx = st.selectbox(
-            "추가할 장비 (매칭 우선 · 매핑 외 장비도 자유 추가 가능)",
-            options=range(len(candidates)),
-            format_func=lambda i: (
-                f"{'✓' if _is_match(candidates[i]) else '·'} "
-                f"{candidates[i].location_id} · {candidates[i].equipment_name} "
-                f"({candidates[i].category})"
-            ),
-            key=f"add_tsk_eq_{round_id}",
-        )
-        sel_eq = candidates[eq_idx] if candidates else None
 
         # QR/수동 인식 시 목록 선택보다 우선 적용
         if eq_id:
