@@ -596,13 +596,11 @@ def add_task_to_round_dialog(round_id: str) -> None:
                  if e.location_id not in already_locs and not _is_match(e)]
     candidates = matched + unmatched  # 매칭 우선 정렬
 
-    # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 / 🔥 화기작업 구간 (v1.6)
-    tab_pick, tab_qr, tab_map, tab_free = st.tabs(
-        ["직접 선택", "QR 스캔", "📍 도면 선택", "🔥 화기작업 구간"]
-    )
+    # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택
+    # v1.7: 화기작업 구간은 별도 탭 없이 '도면 선택 → 신규 위치'로 통합 (탭 중복 제거)
+    tab_pick, tab_qr, tab_map = st.tabs(["직접 선택", "QR 스캔", "📍 도면 선택"])
     sel_eq = None        # Equipment (장비 기반 추가)
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
-    free_work_meta = None  # v1.6: 화기작업 구간 자유 입력 ({floor, work_zone, vendor})
     with tab_pick:
         eq_idx = st.selectbox(
             "추가할 장비 (매칭 우선 · 매핑 외 장비도 자유 추가 가능)",
@@ -676,39 +674,11 @@ def add_task_to_round_dialog(round_id: str) -> None:
             else:
                 sel_eq = picked["data"]
 
-    # v1.6: 화기작업 구간 자유 입력 — spot/장비 없이 작업 위치를 텍스트로 직접 입력
-    with tab_free:
-        st.caption(
-            "💡 작업 구간이 도면에 spot으로 정의되지 않은 경우 사용. "
-            "층 + 작업 구간 + 업체를 자유 입력하면 Task가 생성됩니다."
-        )
-        EQ_FLOORS_LIST = list(EQ_FLOORS)
-        fw_c1, fw_c2 = st.columns([1, 2])
-        with fw_c1:
-            fw_floor = st.selectbox(
-                "층 *",
-                options=EQ_FLOORS_LIST,
-                key=f"add_tsk_fw_floor_{round_id}",
-            )
-        with fw_c2:
-            fw_zone = st.text_input(
-                "작업 구간 설명 *",
-                key=f"add_tsk_fw_zone_{round_id}",
-                placeholder="예: SEC1 EL+15m 배관 용접 / B동 옥상 그라인더 작업",
-            )
-        fw_vendor = st.text_input(
-            "작업 업체 (선택)",
-            key=f"add_tsk_fw_vendor_{round_id}",
-            placeholder="예: ㈜한신건설",
-        )
-        if fw_floor and fw_zone.strip():
-            label_extra = f" · {fw_vendor.strip()}" if fw_vendor.strip() else ""
-            free_work_meta = {
-                "floor": fw_floor,
-                "zone": fw_zone.strip(),
-                "label": f"{fw_floor} / {fw_zone.strip()}{label_extra}",
-            }
-            st.success(f"➕ {free_work_meta['label']}")
+    # 화기작업 구간처럼 도면에 spot이 없는 위치는 '📍 도면 선택 → 🆕 신규 위치 추가'로 등록
+    st.caption(
+        "💡 도면에 정의되지 않은 작업 구간(화기작업 등)은 "
+        "**📍 도면 선택 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
+    )
 
     note = st.text_input(
         "메모(선택)",
@@ -719,7 +689,6 @@ def add_task_to_round_dialog(round_id: str) -> None:
     has_selection = (
         sel_eq is not None
         or sel_empty_spot is not None
-        or free_work_meta is not None
     )
     if st.button(
         "추가", type="primary", use_container_width=True,
@@ -727,16 +696,11 @@ def add_task_to_round_dialog(round_id: str) -> None:
         disabled=not has_selection,
     ):
         if not has_selection:
-            st.error("장비/QR/spot/작업 구간 중 하나는 입력해 주세요.")
+            st.error("장비/QR/spot 중 하나를 선택해 주세요.")
             return
         from lib.data import next_task_id, add_task, _refresh_round_status
         new_tsk = next_task_id()
-        if free_work_meta is not None:
-            # v1.6: 화기작업 구간 자유 입력 — spot/장비 없음
-            equipment_label = f"{free_work_meta['label']} (화기작업)"
-            floor = free_work_meta["floor"]
-            zone = free_work_meta["zone"]
-        elif sel_empty_spot is not None:
+        if sel_empty_spot is not None:
             # spot 기반 — 장비 없이 spot 정보만 사용 (임시/정식 구분)
             spot_tag = (
                 "(신규 위치)" if sel_empty_spot.is_temporary else "(빈 spot)"
