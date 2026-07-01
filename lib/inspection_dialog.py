@@ -201,7 +201,7 @@ def new_inspection_dialog() -> None:
 
 
 def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
-    """[+ Task 추가] 모달의 도면 선택 탭. 회차 매칭 장비 + 빈 spot 마커 + 단일 클릭 선택.
+    """[+ Task 추가] 모달의 점검 위치 등록 탭(도면). 회차 매칭 장비 + 빈 spot 마커 + 단일 클릭 선택.
     candidates: 회차 매칭 후보 장비 (미포함만). all_eq: 전체 장비.
     already_locs: 이미 회차에 포함된 location_id 집합.
     반환: 선택된 항목 dict ({'type': 'equipment'|'empty_spot', 'data': ...}) 또는 None.
@@ -562,7 +562,7 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
 @st.dialog("회차에 Task 추가", width="large")
 def add_task_to_round_dialog(round_id: str) -> None:
     """v1.5 자유 점검 회차에 Task 1건 동적 추가.
-    진입 방식 — 장비 선택(QR+목록 통합) / 📍 도면 선택 2가지 (v1.7)."""
+    진입 방식 — 장비 선택(QR+목록 통합) / 📍 점검 위치 등록(도면) 2가지 (v1.7)."""
     r = data.get_round(round_id)
     if not r:
         st.error("회차를 찾을 수 없습니다.")
@@ -596,10 +596,10 @@ def add_task_to_round_dialog(round_id: str) -> None:
                  if e.location_id not in already_locs and not _is_match(e)]
     candidates = matched + unmatched  # 매칭 우선 정렬
 
-    # 진입 방식 — 장비 선택(사전 위치 설정됨) / 📍 도면 선택
+    # 진입 방식 — 장비 선택(사전 위치 설정됨) / 📍 점검 위치 등록(도면)
     # v1.7: '직접 선택'과 'QR 스캔'은 둘 다 등록 장비를 고르는 동일 흐름이라 한 탭으로 통합.
-    #        화기작업 구간은 별도 탭 없이 '도면 선택 → 신규 위치'로 통합 (탭 중복 제거)
-    tab_eq, tab_map = st.tabs(["장비 선택 (사전 위치 설정됨)", "📍 도면 선택"])
+    #        화기작업 구간은 별도 탭 없이 '점검 위치 등록 → 신규 위치'로 통합 (탭 중복 제거)
+    tab_eq, tab_map = st.tabs(["장비 선택 (사전 위치 설정됨)", "📍 점검 위치 등록"])
     sel_eq = None        # Equipment (장비 기반 추가)
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
     with tab_eq:
@@ -609,7 +609,7 @@ def add_task_to_round_dialog(round_id: str) -> None:
         )
         st.caption(
             "💡 도면에 정의되지 않은 작업 구간(화기작업 등)은 "
-            "**📍 도면 선택 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
+            "**📍 점검 위치 등록 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
         )
 
         # 1) 목록에서 직접 선택 (기본 경로)
