@@ -1520,8 +1520,8 @@ def equipment_dialog() -> None:
     위치 마스터에서 정의). 등록 후 QR 모달은 자동 노출하지 않는다."""
     st.markdown(
         "<div style='color:#64748B; font-size:0.88rem; margin-bottom:0.5rem;'>"
-        "새 소방시설을 시설 마스터에 등록합니다. 위치는 관리자가 정의한 "
-        "spot 목록에서 선택하며, 등록 즉시 QR이 발급됩니다."
+        "새 소방시설을 시설 마스터에 등록합니다. 위치는 기존 spot에서 선택하거나 "
+        "**신규 위치를 즉석 생성**할 수 있으며, 등록 즉시 QR이 발급됩니다."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1540,45 +1540,82 @@ def equipment_dialog() -> None:
             key="eq_dlg_name",
         )
 
-    # ── 위치 spot 선택 (층 → spot 2단계) ──
+    # ── 위치 지정: 기존 spot 선택 OR 신규 위치 즉석 생성 (v1.7 전체 이관) ──
     all_spots = data.load_spots()
     floors_with_spots = sorted({s.floor for s in all_spots},
                                key=lambda f: EQ_FLOORS.index(f) if f in EQ_FLOORS else 999)
 
-    c3, c4 = st.columns([1, 2])
-    with c3:
-        if floors_with_spots:
-            floor = st.selectbox(
-                "층", options=floors_with_spots, key="eq_dlg_floor",
+    loc_mode = st.radio(
+        "위치 지정",
+        ["기존 위치 선택", "신규 위치 만들기"],
+        horizontal=True,
+        key="eq_dlg_loc_mode",
+    )
+
+    sel_spot = None          # 기존 선택 결과
+    new_spot_meta = None     # 신규 생성 결과 (floor, room_name, x, y)
+
+    if loc_mode == "기존 위치 선택":
+        c3, c4 = st.columns([1, 2])
+        with c3:
+            if floors_with_spots:
+                floor = st.selectbox(
+                    "층", options=floors_with_spots, key="eq_dlg_floor",
+                )
+            else:
+                floor = None
+                st.markdown(
+                    "<div style='padding-top:1.7rem; color:#DC2626; font-size:0.85rem;'>"
+                    "정의된 위치가 없습니다. '신규 위치 만들기'를 사용하세요.</div>",
+                    unsafe_allow_html=True,
+                )
+        with c4:
+            floor_spots = [s for s in all_spots if s.floor == floor] if floor else []
+            if floor_spots:
+                spot_idx = st.selectbox(
+                    "위치 (spot)",
+                    options=range(len(floor_spots)),
+                    format_func=lambda i: (
+                        f"{floor_spots[i].room_name} "
+                        f"({floor_spots[i].spot_id})"
+                    ),
+                    key="eq_dlg_spot_idx",
+                )
+                sel_spot = floor_spots[spot_idx]
+            else:
+                st.markdown(
+                    "<div style='padding-top:1.7rem; color:#94A3B8; font-size:0.85rem;'>"
+                    "이 층에 정의된 위치가 없습니다. '신규 위치 만들기'로 등록하세요.</div>",
+                    unsafe_allow_html=True,
+                )
+    else:
+        # 신규 위치 즉석 생성 — 장비 등록과 동시에 spot 정식 생성
+        nc1, nc2 = st.columns([1, 2])
+        with nc1:
+            new_floor = st.selectbox("층", options=list(EQ_FLOORS), key="eq_dlg_new_floor")
+        with nc2:
+            new_room = st.text_input(
+                "위치 설명(방이름)",
+                key="eq_dlg_new_room",
+                placeholder="예: B2 기계실 입구",
             )
-        else:
-            floor = None
-            st.markdown(
-                "<div style='padding-top:1.7rem; color:#DC2626; font-size:0.85rem;'>"
-                "정의된 위치가 없습니다.</div>",
-                unsafe_allow_html=True,
+        xc, yc = st.columns(2)
+        with xc:
+            new_x = st.number_input(
+                "x_pct (도면 폭 %)", min_value=0.0, max_value=100.0,
+                value=50.0, step=0.5, format="%.1f", key="eq_dlg_new_x",
             )
-    with c4:
-        floor_spots = [s for s in all_spots if s.floor == floor] if floor else []
-        if floor_spots:
-            spot_idx = st.selectbox(
-                "위치 (spot)",
-                options=range(len(floor_spots)),
-                format_func=lambda i: (
-                    f"{floor_spots[i].room_name} "
-                    f"({floor_spots[i].spot_id})"
-                ),
-                key="eq_dlg_spot_idx",
+        with yc:
+            new_y = st.number_input(
+                "y_pct (도면 높이 %)", min_value=0.0, max_value=100.0,
+                value=50.0, step=0.5, format="%.1f", key="eq_dlg_new_y",
             )
-            sel_spot = floor_spots[spot_idx]
-        else:
-            sel_spot = None
-            st.markdown(
-                "<div style='padding-top:1.7rem; color:#94A3B8; font-size:0.85rem;'>"
-                "이 층에 정의된 위치가 없습니다. 관리자에게 위치 마스터에서 spot을 "
-                "추가해달라고 요청하세요.</div>",
-                unsafe_allow_html=True,
-            )
+        st.caption(
+            "💡 정밀 위치는 등록 후 ⚙️ 관리자 메뉴 → 위치 마스터 → [속성 변경]에서 "
+            "도면 클릭으로 조정할 수 있습니다."
+        )
+        if new_room.strip():
+            new_spot_meta = (new_floor, new_room.strip(), new_x, new_y)
 
     serial = st.text_input(
         "시리얼 번호 (자동 + 수정 가능)",
@@ -1608,8 +1645,16 @@ def equipment_dialog() -> None:
             f"<b>spot</b> · {sel_spot.room_name} ({sel_spot.spot_id})<br>"
             f"<b>도면 좌표</b> · ({sel_spot.x_pct:.1f}%, {sel_spot.y_pct:.1f}%)"
         )
+    elif new_spot_meta:
+        nf, nr, nx, ny = new_spot_meta
+        loc_html = (
+            f"<b>신규 위치</b> · {nf} / {nr} (등록 시 spot 생성)<br>"
+            f"<b>도면 좌표</b> · ({nx:.1f}%, {ny:.1f}%)"
+        )
     else:
-        loc_html = "<b>위치</b> · 위치 spot 미선택 (등록 불가)"
+        loc_html = "<b>위치</b> · 위치 미지정 (기존 선택 또는 신규 만들기 필요)"
+
+    has_location = (sel_spot is not None) or (new_spot_meta is not None)
 
     st.markdown(
         "<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; "
@@ -1623,7 +1668,7 @@ def equipment_dialog() -> None:
 
     if st.button(
         "등록 + QR 발급", type="primary", use_container_width=True,
-        key="eq_dlg_submit", disabled=(sel_spot is None),
+        key="eq_dlg_submit", disabled=(not has_location),
     ):
         if not equipment_name.strip():
             st.error("장비명을 입력해 주세요.")
@@ -1639,6 +1684,17 @@ def equipment_dialog() -> None:
                 "다른 번호를 입력하거나 자동 발급된 번호를 그대로 사용하세요."
             )
             return
+
+        # 신규 위치 만들기 모드면 spot을 먼저 정식 생성 (is_temporary=False)
+        if sel_spot is None and new_spot_meta is not None:
+            nf, nr, nx, ny = new_spot_meta
+            new_spot = data.Spot(
+                spot_id=data.next_spot_id(nf),
+                floor=nf, room_name=nr, notes="",
+                x_pct=nx, y_pct=ny, is_temporary=False,
+            )
+            data.add_spot(new_spot)
+            sel_spot = new_spot
 
         # spot 정보로 zone/location_id/pixel 좌표 자동 채움
         location_id = location_id_from_spot(sel_spot.spot_id)  # 예: 1F-03

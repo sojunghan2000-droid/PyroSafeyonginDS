@@ -546,12 +546,16 @@ def _spot_master_tab() -> None:
     with head_l:
         st.markdown(
             "<div style='color:#64748B; font-size:0.92rem;'>"
-            "층별 위치(spot)를 정의·관리합니다. 신규 정의는 우측 버튼에서 모달로 진행."
+            "등록된 위치(spot)를 <b>관리·검증</b>합니다 — 사용 여부 확인, 신규(임시) 위치 "
+            "정식 전환, 속성·좌표 조정.<br>"
+            "<span style='color:#94A3B8; font-size:0.85rem;'>"
+            "일상 신규 위치는 <b>시설 관리(장비 등록)</b>·<b>안전점검(점검 위치 등록)</b>에서 "
+            "생성됩니다. 아래 버튼은 초기 세팅·예외용.</span>"
             "</div>",
             unsafe_allow_html=True,
         )
     with head_r:
-        if st.button("+ 신규 위치 추가", type="primary",
+        if st.button("+ 신규 위치 (초기 세팅)", type="secondary",
                      use_container_width=True, key="admin_spot_open_dlg"):
             for k in ("admin_spot_room", "admin_spot_notes",
                       "admin_spot_x_input", "admin_spot_y_input"):
