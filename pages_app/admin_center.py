@@ -32,8 +32,11 @@ def _floor_image_uri(floor: str) -> str | None:
     return f"data:image/png;base64,{base64.b64encode(p.read_bytes()).decode('ascii')}"
 
 
-def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
-    """도면 PNG + 기존 spot 마커. 클릭으로 좌표 픽업할 수 있게 빈 영역 trace 1개."""
+def _make_floor_fig(floor: str, spots: list[Spot],
+                    show_grid: bool = True, height: int = 600) -> go.Figure | None:
+    """도면 PNG + 기존 spot 마커.
+    show_grid=True 면 좌표 픽업용 격자(파란 점) 표시(신규 위치 추가 모달용).
+    show_grid=False 면 읽기 전용 도면(위치 마스터 인라인 미리보기용)."""
     uri = _floor_image_uri(floor)
     if uri is None:
         return None
@@ -63,30 +66,31 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
 
     # 좌표 픽업용 격자 (50x50 = 2500개) — 살짝 보이는 점 + 호버 안내
     # 사용자가 클릭 가능 위치를 시각적으로 인지하도록 visible
-    grid_x, grid_y = [], []
-    for i in range(50):
-        for j in range(50):
-            grid_x.append((i + 0.5) / 50 * FIG_W)
-            grid_y.append((j + 0.5) / 50 * FIG_H)
-    fig.add_trace(go.Scatter(
-        x=grid_x, y=grid_y,
-        mode="markers",
-        marker=dict(
-            size=10,
-            color="rgba(59,130,246,0.22)",
-            line=dict(width=0),
-        ),
-        hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
-        showlegend=False,
-        name="grid",
-    ))
+    if show_grid:
+        grid_x, grid_y = [], []
+        for i in range(50):
+            for j in range(50):
+                grid_x.append((i + 0.5) / 50 * FIG_W)
+                grid_y.append((j + 0.5) / 50 * FIG_H)
+        fig.add_trace(go.Scatter(
+            x=grid_x, y=grid_y,
+            mode="markers",
+            marker=dict(
+                size=10,
+                color="rgba(59,130,246,0.22)",
+                line=dict(width=0),
+            ),
+            hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
+            showlegend=False,
+            name="grid",
+        ))
 
     fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
     fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
     fig.update_layout(
         margin=dict(l=0, r=0, t=0, b=0),
         plot_bgcolor="#F8FAFC",
-        height=600,
+        height=height,
         dragmode="pan",
         showlegend=False,
         clickmode="event+select",
@@ -469,6 +473,73 @@ def _spot_define_dialog() -> None:
                 st.rerun()
 
 
+def _select_admin_floor(target: str) -> None:
+    """미니맵 [이 층 보기] 클릭 콜백 — 층 선택 selectbox를 target 층으로 전환."""
+    st.session_state["admin_spot_floor"] = target
+
+
+def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
+    """위치 마스터 층 선택 아래 도면 미리보기 (읽기 전용).
+    - 특정 층: 그 층 도면 + spot 마커
+    - 전체: 전 층 미니맵 그리드 + [이 층 보기] 드릴인 버튼
+    """
+    if floor != "전체":
+        fig = _make_floor_fig(floor, spots, show_grid=False, height=460)
+        if fig is None:
+            st.caption(f"({floor} 도면 이미지가 없습니다)")
+            return
+        st.markdown(
+            f"<div style='margin-top:0.4rem; color:#475569; font-size:0.85rem;'>"
+            f"🗺️ <b>{floor}</b> 도면 · spot {len(spots)}개 (노란 점)</div>",
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(
+            fig, use_container_width=True,
+            config={"displayModeBar": False, "staticPlot": True},
+            key=f"admin_spot_fig_{floor}",
+        )
+        return
+
+    # 전체 — 전 층 미니맵 그리드 (4열) + 드릴인 버튼
+    st.markdown(
+        "<div style='margin-top:0.4rem; color:#475569; font-size:0.85rem;'>"
+        "🗺️ 전 층 미니맵 — <b>[이 층 보기]</b>로 해당 층 상세로 이동</div>",
+        unsafe_allow_html=True,
+    )
+    all_spots = spots  # 이미 전체 로드됨
+    by_floor: dict[str, list[Spot]] = {f: [] for f in ADMIN_FLOORS}
+    for s in all_spots:
+        by_floor.setdefault(s.floor, []).append(s)
+
+    n_cols = 4
+    for row_start in range(0, len(ADMIN_FLOORS), n_cols):
+        row_floors = ADMIN_FLOORS[row_start:row_start + n_cols]
+        cols = st.columns(n_cols)
+        for col, fl in zip(cols, row_floors):
+            with col:
+                fspots = by_floor.get(fl, [])
+                mini = _make_floor_fig(fl, fspots, show_grid=False, height=150)
+                st.markdown(
+                    f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
+                    f"margin-bottom:0.1rem;'>{fl} "
+                    f"<span style='color:#94A3B8; font-weight:500;'>({len(fspots)})</span></div>",
+                    unsafe_allow_html=True,
+                )
+                if mini is not None:
+                    st.plotly_chart(
+                        mini, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"admin_mini_{fl}",
+                    )
+                else:
+                    st.caption("(도면 없음)")
+                st.button(
+                    "이 층 보기", key=f"admin_drill_{fl}",
+                    use_container_width=True,
+                    on_click=_select_admin_floor, args=(fl,),
+                )
+
+
 def _spot_master_tab() -> None:
     # 상단 헤더 + [+ 신규 위치 추가] 버튼
     head_l, head_r = st.columns([3, 1])
@@ -497,6 +568,9 @@ def _spot_master_tab() -> None:
         key="admin_spot_floor",
     )
     spots = data.load_spots() if floor == "전체" else data.load_spots(floor)
+
+    # --- 도면 미리보기 (읽기 전용, v1.7) ---
+    _spot_master_floor_preview(floor, spots)
 
     # --- spot 목록 + 편집/삭제 ---
     list_title = (
