@@ -97,6 +97,45 @@ def new_inspection_dialog() -> None:
         placeholder="해당 점검종류를 선택하세요 (복수 가능)",
     )
 
+    # === 점검 회차 연결 (v1.7) — 진행 중 점검이 여러 개면 어느 회차인지 선택 ===
+    _open_tasks = [
+        t for t in data.load_tasks()
+        if t.round_id and not t.excluded and t.equipment_label
+        and eq.location_id in t.equipment_label
+        and t.status not in ("Completed",)
+    ]
+    selected_task_id: str | None = None
+    if len(_open_tasks) == 1:
+        _ot = _open_tasks[0]
+        selected_task_id = _ot.task_id
+        st.caption(f"🔗 이 점검은 **{_ot.round_id}** ({_ot.task_type}) 회차에 연결됩니다.")
+    elif len(_open_tasks) >= 2:
+        from lib.ui import TASK_STATUS_KO
+        _NONE_ROUND = "__none__"
+        st.markdown(
+            "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
+            "어느 회차 점검인가요?</b>", unsafe_allow_html=True,
+        )
+        st.caption(
+            f"이 장비에 진행 중인 점검이 {len(_open_tasks)}건입니다. "
+            "결과를 연결할 회차를 선택하세요."
+        )
+
+        def _fmt_round(tid: str) -> str:
+            if tid == _NONE_ROUND:
+                return "— 회차 미연결 (단독 기록) —"
+            t = next(x for x in _open_tasks if x.task_id == tid)
+            return (f"{t.round_id} · {t.task_type} · 마감 {fmt_date(t.due_date)} "
+                    f"({TASK_STATUS_KO.get(t.status, t.status)})")
+
+        _pick = st.radio(
+            "회차 선택",
+            options=[t.task_id for t in _open_tasks] + [_NONE_ROUND],
+            format_func=_fmt_round, key="dlg_round_pick",
+            label_visibility="collapsed",
+        )
+        selected_task_id = None if _pick == _NONE_ROUND else _pick
+
     st.markdown("<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>점검 결과</b>",
                 unsafe_allow_html=True)
     result = st.radio("결과", ["양호", "불량"], horizontal=True,
@@ -148,15 +187,9 @@ def new_inspection_dialog() -> None:
             st.error("불량인 경우 지적사항을 입력해 주세요.")
             return
 
-        # 이 장비의 활성 회차에서 미완료 Task 자동 매핑 (있으면)
-        matched_task_id: str | None = None
-        for t in data.load_tasks():
-            if (t.round_id and not t.excluded
-                    and t.equipment_label
-                    and eq.location_id in t.equipment_label
-                    and t.status not in ("Completed",)):
-                matched_task_id = t.task_id
-                break
+        # 회차 연결 — 렌더 시 결정된 선택값 사용
+        # (진행 중 점검 1건=자동 / 2건 이상=사용자가 위에서 선택 / 0건=None)
+        matched_task_id: str | None = selected_task_id
 
         new_no = None
         if result == "불량":
