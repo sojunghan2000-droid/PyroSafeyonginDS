@@ -18,8 +18,9 @@ COL_RATIOS = [1.0, 1.8, 0.9, 1.0, 0.9, 1.2, 0.9]
 _EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
 
 
-def _equipment_floor_fig(floor: str, eq_list):
-    """시설 관리 층 도면 미리보기 (읽기 전용) — 장비를 건강상태 색 마커로 표시."""
+def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
+    """시설 관리 층 도면 미리보기 (읽기 전용) — 장비를 건강상태 색 마커로 표시.
+    height로 단일(460)/미니맵(180) 크기 구분."""
     import base64
     from pathlib import Path
     import plotly.graph_objects as go
@@ -64,10 +65,15 @@ def _equipment_floor_fig(floor: str, eq_list):
     fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
     fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#F8FAFC", height=460,
+        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#F8FAFC", height=height,
         showlegend=False, uirevision=f"eq_floor_{floor}",
     )
     return fig
+
+
+def _set_eq_floor(target: str) -> None:
+    """미니맵 [이 층 보기] 콜백 — 층 필터를 target 층으로 전환."""
+    st.session_state["eq_floor_filter"] = target
 
 
 def _table_header_html() -> str:
@@ -443,6 +449,7 @@ def render() -> None:
             "Filter",
             ["전체 층"] + sorted({e.floor for e in eq}),
             label_visibility="collapsed",
+            key="eq_floor_filter",
         )
     with f2:
         sort_by = st.selectbox(
@@ -494,10 +501,42 @@ def render() -> None:
                 key=f"eq_floor_fig_{floor_filter}",
             )
     else:
-        st.caption(
-            "💡 특정 층을 선택하면 그 층 도면에 장비 위치가 표시됩니다. "
-            "(전 층 지도는 🏠 대시보드 → 도면 그리드)"
+        # 전체 층 — 전 층 미니맵 그리드 + [이 층 보기] 드릴인
+        st.markdown(
+            "<div style='margin-top:0.3rem; color:#475569; font-size:0.85rem;'>"
+            "🗺️ 전 층 도면 · 장비 위치 (🟢 양호 · 🔴 불량 · 🔵 점검도래) — "
+            "<b>[이 층 보기]</b>로 상세 이동</div>",
+            unsafe_allow_html=True,
         )
+        eq_floors = sorted({e.floor for e in eq})
+        n_cols = 3
+        for row_start in range(0, len(eq_floors), n_cols):
+            row_floors = eq_floors[row_start:row_start + n_cols]
+            grid_cols = st.columns(n_cols)
+            for gcol, fl in zip(grid_cols, row_floors):
+                with gcol:
+                    fl_eq = [e for e in rows if e.floor == fl]
+                    st.markdown(
+                        f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
+                        f"margin-bottom:0.1rem;'>{fl} "
+                        f"<span style='color:#94A3B8; font-weight:500;'>"
+                        f"({len(fl_eq)})</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                    mini = _equipment_floor_fig(fl, fl_eq, height=170)
+                    if mini is not None:
+                        st.plotly_chart(
+                            mini, use_container_width=True,
+                            config={"displayModeBar": False, "staticPlot": True},
+                            key=f"eq_mini_{fl}",
+                        )
+                    else:
+                        st.caption("(도면 없음)")
+                    st.button(
+                        "이 층 보기", key=f"eq_drill_{fl}",
+                        use_container_width=True,
+                        on_click=_set_eq_floor, args=(fl,),
+                    )
 
     # ---------- 테이블 (st.columns 기반) ----------
     st.markdown(_table_header_html(), unsafe_allow_html=True)
