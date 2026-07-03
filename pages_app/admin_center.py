@@ -607,7 +607,7 @@ def _spot_master_tab() -> None:
     cols_ratio = [1.3, 1.9, 1.4, 0.9, 0.7, 0.9, 0.7]
     header = st.columns(cols_ratio)
     for col, txt in zip(header,
-                        ["spot ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
+                        ["위치 ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
         col.markdown(
             f"<div style='color:#64748B; font-size:0.78rem; font-weight:600;'>{txt}</div>",
             unsafe_allow_html=True,
@@ -629,9 +629,12 @@ def _spot_master_tab() -> None:
             f"font-size:0.68rem; font-weight:600;'>{s.floor}</span>"
             if floor == "전체" else ""
         )
+        # 위치 ID(B2-01) 메인 + 원본 spot ID(SPOT-B2-001) 작게 병기
+        loc_id = data.location_id_from_spot(s.spot_id)
         row[0].markdown(
-            f"<span style='font-weight:600; color:#0F172A;'>{s.spot_id}</span>"
-            f"{floor_badge}{temp_badge}",
+            f"<span style='font-weight:600; color:#0F172A;'>{loc_id}</span>"
+            f"{floor_badge}{temp_badge}"
+            f"<div style='color:#94A3B8; font-size:0.7rem;'>{s.spot_id}</div>",
             unsafe_allow_html=True,
         )
         row[1].markdown(s.room_name)
