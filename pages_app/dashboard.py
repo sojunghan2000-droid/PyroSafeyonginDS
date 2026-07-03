@@ -1,4 +1,4 @@
-"""대시보드 페이지 — 2탭 구조 (현황 요약 · Location)."""
+"""대시보드 페이지 — 2탭 구조 (현황 요약 · 층별 도면)."""
 from __future__ import annotations
 
 import base64
@@ -410,7 +410,7 @@ def render() -> None:
                      use_container_width=True, key="open_inspect_qr"):
             _inspect_qr_dialog()
 
-    tab_summary, tab_grid = st.tabs(["현황 요약", "Location"])
+    tab_summary, tab_grid = st.tabs(["현황 요약", "층별 도면"])
     with tab_summary:
         _summary_tab()
     with tab_grid:
