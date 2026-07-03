@@ -14,6 +14,61 @@ from lib.ui import badge, fmt_date, page_header, render_kpi_row
 # 테이블 컬럼 비율 (총합 = 1) — 작업 상태 컬럼 신설
 COL_RATIOS = [1.0, 1.8, 0.9, 1.0, 0.9, 1.2, 0.9]
 
+# 장비 건강상태 마커 색 (양호/불량/점검도래)
+_EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
+
+
+def _equipment_floor_fig(floor: str, eq_list):
+    """시설 관리 층 도면 미리보기 (읽기 전용) — 장비를 건강상태 색 마커로 표시."""
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+
+    ASSETS = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+    p = ASSETS / f"{floor}.png"
+    if not p.exists():
+        return None
+    uri = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    xs, ys, cs, txt, cd = [], [], [], [], []
+    for e in eq_list:
+        if not (e.pixel_x or e.pixel_y):
+            continue
+        xs.append(e.pixel_x / 100 * FIG_W)
+        ys.append(FIG_H - e.pixel_y / 100 * FIG_H)
+        cs.append(_EQ_HEALTH_COLOR.get(e.health_status, "#94A3B8"))
+        txt.append(e.location_id)
+        cd.append((e.equipment_id, e.equipment_name, e.health_status, e.location_id))
+    if xs:
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers+text",
+            text=txt, textposition="top center",
+            textfont=dict(size=10, color="#0F172A"),
+            marker=dict(size=15, color=cs, line=dict(color="#FFFFFF", width=2)),
+            customdata=cd,
+            hovertemplate=(
+                "<b>%{customdata[1]}</b><br>%{customdata[3]} · %{customdata[0]}"
+                "<br>상태: %{customdata[2]}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#F8FAFC", height=460,
+        showlegend=False, uirevision=f"eq_floor_{floor}",
+    )
+    return fig
+
 
 def _table_header_html() -> str:
     return (
@@ -422,6 +477,27 @@ def render() -> None:
     else:
         order = {"FAIL": 0, "DUE": 1, "PASS": 2}
         rows = sorted(rows, key=lambda e: order.get(e.health_status, 9))
+
+    # ---------- 층 도면 미리보기 (읽기 전용, v1.7) ----------
+    if floor_filter != "전체 층":
+        _fig = _equipment_floor_fig(floor_filter, rows)
+        if _fig is not None:
+            st.markdown(
+                f"<div style='margin-top:0.3rem; color:#475569; font-size:0.85rem;'>"
+                f"🗺️ <b>{floor_filter}</b> 도면 · 장비 위치 "
+                f"(🟢 양호 · 🔴 불량 · 🔵 점검도래)</div>",
+                unsafe_allow_html=True,
+            )
+            st.plotly_chart(
+                _fig, use_container_width=True,
+                config={"displayModeBar": False, "staticPlot": True},
+                key=f"eq_floor_fig_{floor_filter}",
+            )
+    else:
+        st.caption(
+            "💡 특정 층을 선택하면 그 층 도면에 장비 위치가 표시됩니다. "
+            "(전 층 지도는 🏠 대시보드 → 도면 그리드)"
+        )
 
     # ---------- 테이블 (st.columns 기반) ----------
     st.markdown(_table_header_html(), unsafe_allow_html=True)
