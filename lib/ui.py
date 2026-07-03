@@ -206,11 +206,13 @@ THEME_CSS = """
         background: #F8FAFC;
         border-right: 1px solid #E2E8F0;
     }
-    /* PyroSafe 좌측 = 상단바(.ps-topbar) 좌측 여백 1.75rem 과 정렬.
-       !important 필수 — 없으면 Streamlit 기본 패딩에 밀림 (mini 모드 규칙과 동일 패턴) */
-    section[data-testid="stSidebar"] .block-container {
-        padding-top: 1.5rem;
-        padding-left: 1.75rem !important;
+    /* PyroSafe 좌측을 상단바(.ps-topbar, left=28px)와 정확히 정렬.
+       실측 결과 사이드바 실제 컨텐츠 래퍼는 stSidebarUserContent(기본 left=20px)이고
+       .block-container는 사이드바에 존재하지 않음(그래서 이전 규칙은 무효였음).
+       +8px 좌패딩으로 20 → 28px 맞춤. mini 모드는 제외(버튼 중앙정렬 유지). */
+    body:not(.ps-sidebar-mini) section[data-testid="stSidebar"]
+        [data-testid="stSidebarUserContent"] {
+        padding-left: 8px !important;
     }
 
     /* Streamlit 네이티브 사이드바 collapse 버튼/헤더 숨김 (자체 mini/expanded 토글 사용) */
