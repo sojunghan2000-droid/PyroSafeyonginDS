@@ -249,11 +249,9 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         )
     with lc:
         st.markdown(legend_html([
-            ("#2563EB", "매칭 장비"),
-            ("#CBD5E1", "매핑 외 장비"),
-            ("#64748B", "이미 포함"),
-            ("#94A3B8", "빈 spot(◇)"),
-            ("#3B82F6", "신규 위치(◇)"),
+            ("#2563EB", "점검 대상 (회차 매칭)"),
+            ("#94A3B8", "그 외 선택 가능 (● 장비 · ◇ 빈/신규 위치)"),
+            ("#64748B", "이미 포함 (선택 불가)"),
         ]), unsafe_allow_html=True)
 
     img_path = ASSETS_DIR / f"{floor}.png"
@@ -299,8 +297,8 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
                 x=nomat_xs, y=nomat_ys, mode="markers+text",
                 text=nomat_txt, textposition="top center",
                 textfont=dict(size=10, color="#475569"),
-                marker=dict(size=16, color="#CBD5E1",
-                            line=dict(color="#94A3B8", width=1.5)),
+                marker=dict(size=16, color="#94A3B8",
+                            line=dict(color="#FFFFFF", width=1.5)),
                 customdata=nomat_cd,
                 hovertemplate=(
                     "<b>%{customdata[1]}</b> (매핑 외 · 자유 추가)<br>"
@@ -401,9 +399,9 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         fig.add_trace(go.Scatter(
             x=xs, y=ys, mode="markers+text",
             text=txts, textposition="bottom center",
-            textfont=dict(size=9, color="#1D4ED8"),
-            marker=dict(size=14, color="#3B82F6",
-                        line=dict(color="#1E40AF", width=2),
+            textfont=dict(size=9, color="#64748B"),
+            marker=dict(size=14, color="#94A3B8",
+                        line=dict(color="#64748B", width=2),
                         symbol="diamond-open"),
             customdata=custom,
             hovertemplate=(
