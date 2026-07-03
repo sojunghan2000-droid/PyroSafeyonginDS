@@ -11,8 +11,8 @@ from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 테이블 컬럼 비율 — v1.7: 6컬럼 (최근 점검일+건강상태 병합, 작업 상태→점검 이력)
-COL_RATIOS = [1.15, 1.7, 0.85, 1.35, 1.0, 0.85]
+# 테이블 컬럼 비율 — v1.7: 7컬럼 (위치 등록 별도 컬럼, 최근 점검일+건강상태 병합, 작업 상태→점검 이력)
+COL_RATIOS = [1.0, 1.6, 0.85, 0.85, 1.3, 0.95, 0.85]
 
 # 장비 건강상태 마커 색 (양호/불량/점검도래)
 _EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
@@ -85,6 +85,7 @@ def _table_header_html() -> str:
         "border-bottom:1px solid #E2E8F0;'>"
         "<div>위치 ID</div>"
         "<div>시설 종류</div>"
+        "<div>위치 등록</div>"
         "<div>QR 상태</div>"
         "<div>최근 점검</div>"
         "<div>점검 이력</div>"
@@ -560,17 +561,8 @@ def render() -> None:
     for e in rows:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         with cols[0]:
-            # 도면 위치(spot) 등록 여부 배지
-            registered = bool(e.spot_id)
-            loc_badge = (
-                "<span style='color:#16A34A; font-size:0.72rem;'>📍 등록</span>"
-                if registered else
-                "<span style='color:#D97706; font-size:0.72rem; "
-                "font-weight:600;'>⚠️ 미등록</span>"
-            )
             st.markdown(
-                f"<span style='font-weight:600; color:#0F172A;'>{e.location_id}</span>"
-                f"<div style='margin-top:0.1rem;'>{loc_badge}</div>",
+                f"<span style='font-weight:600; color:#0F172A;'>{e.location_id}</span>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
@@ -580,8 +572,19 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
         with cols[2]:
-            st.markdown(badge(e.qr_status), unsafe_allow_html=True)
+            # 도면 위치(spot) 등록 여부 — 별도 컬럼, 이모지 없이 텍스트
+            registered = bool(e.spot_id)
+            loc_txt = (
+                "<span style='color:#16A34A; font-weight:600; "
+                "font-size:0.82rem;'>등록</span>"
+                if registered else
+                "<span style='color:#D97706; font-weight:600; "
+                "font-size:0.82rem;'>미등록</span>"
+            )
+            st.markdown(loc_txt, unsafe_allow_html=True)
         with cols[3]:
+            st.markdown(badge(e.qr_status), unsafe_allow_html=True)
+        with cols[4]:
             # 최근 점검일 + 건강상태(점검 결과) 병합
             date_txt = fmt_date(e.last_inspection) if e.last_inspection else "미점검"
             st.markdown(
@@ -589,14 +592,14 @@ def render() -> None:
                 f"<div style='margin-top:0.15rem;'>{badge(e.health_status)}</div>",
                 unsafe_allow_html=True,
             )
-        with cols[4]:
+        with cols[5]:
             # 점검 이력 — 완료 점검 횟수 표시 + 클릭 시 이력 팝업
             hist = _equipment_history(e, all_tasks, all_defs)
             hist_label = f"이력 {len(hist)}회" if hist else "이력 —"
             if st.button(hist_label, key=f"hist_btn_{e.equipment_id}",
                          use_container_width=True):
                 open_status_for = e.equipment_id
-        with cols[5]:
+        with cols[6]:
             if st.button("속성", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
                 _qr_dialog(e.equipment_id)
 
