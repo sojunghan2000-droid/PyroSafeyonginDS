@@ -880,22 +880,34 @@ def render_sidebar(active: str) -> str:
     _toggle_body_class("ps-sidebar-mini", mini)
 
     with st.sidebar:
-        # 토글 버튼 (« 또는 »)
         toggle_icon = "»" if mini else "«"
-        st.markdown('<div class="ps-sb-toggle">', unsafe_allow_html=True)
-        if st.button(toggle_icon, key="sb_toggle", use_container_width=True):
-            st.session_state["sidebar_mode"] = "expanded" if mini else "mini"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
 
-        # 브랜드 + 부제 (mini 모드에선 CSS로 숨김)
-        st.markdown(
-            """
-            <div class="ps-sb-brand" style="font-size:1.25rem; font-weight:700; color:#2563EB; line-height:1.2; margin-bottom:0.2rem;">PyroSafe</div>
-            <div class="ps-sb-sub" style="color:#64748B; font-size:0.85rem; margin-bottom:1.25rem;">용인덕성 AI DC</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        if mini:
+            # 미니 모드: 토글(»)만 (브랜드 숨김) — 80px 폭이라 컬럼 미사용
+            st.markdown('<div class="ps-sb-toggle">', unsafe_allow_html=True)
+            if st.button(toggle_icon, key="sb_toggle", use_container_width=True):
+                st.session_state["sidebar_mode"] = "expanded"
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            # 확장 모드: 브랜드(좌) + « 토글(우)을 같은 줄에 배치 (상단 정렬)
+            bcol, tcol = st.columns([1, 0.32], vertical_alignment="top")
+            with bcol:
+                st.markdown(
+                    """
+                    <div class="ps-sb-brand" style="font-size:1.25rem; font-weight:700; color:#2563EB; line-height:1.2; margin-bottom:0.2rem;">PyroSafe</div>
+                    <div class="ps-sb-sub" style="color:#64748B; font-size:0.85rem;">용인덕성 AI DC</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with tcol:
+                st.markdown('<div class="ps-sb-toggle">', unsafe_allow_html=True)
+                if st.button(toggle_icon, key="sb_toggle", use_container_width=True):
+                    st.session_state["sidebar_mode"] = "mini"
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+            # 브랜드 줄과 네비게이션 사이 여백
+            st.markdown("<div style='height:0.9rem;'></div>", unsafe_allow_html=True)
 
         # 번호 prefix nav
         selected = active
