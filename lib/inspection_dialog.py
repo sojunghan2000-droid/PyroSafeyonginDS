@@ -560,9 +560,8 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         )
     else:
         st.caption(
-            "🔵 파란 원 = 매칭 장비 · ⚪ 옅은 회색 원 = 매핑 외(자유 추가) · "
-            "⚫ 진회색 = 이미 포함 · ◇ 회색 다이아 = 빈 spot · 🔷 파란 다이아 = 신규 위치 · "
-            "신규 위치를 새로 만들려면 상단 토글 활성화"
+            "🆕 신규 위치를 새로 만들려면 상단 **신규 위치 추가** 토글을 켜세요. "
+            "(마커 색 설명은 위 범례 참고)"
         )
     return None
 
