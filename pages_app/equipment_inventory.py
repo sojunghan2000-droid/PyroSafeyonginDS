@@ -94,6 +94,23 @@ def _table_header_html() -> str:
     )
 
 
+def _columns_help_md() -> str:
+    """테이블 컬럼별 목적 + 조치 방법 안내 (헤더 ❓ 팝오버 내용)."""
+    return (
+        "**시설 관리 테이블 — 컬럼 안내**\n\n"
+        "- **위치 ID** — 장비의 도면상 위치(층-번호) 식별자.\n"
+        "- **시설 종류** — 장비 명칭 + 시리얼(SN).\n"
+        "- **위치 등록** — 도면(spot)에 좌표가 지정됐는지 여부.\n"
+        "  · <span style='color:#D97706;'>미등록</span> → **[속성]** 또는 위치 마스터에서 도면 위치 지정.\n"
+        "- **QR 상태** — `PENDING`(스티커 부착·첫 스캔 전) / `ASSIGNED`(현장 스캔 완료).\n"
+        "  · `PENDING` → QR 스티커 부착 후 **현장에서 스캔**하면 자동 전환.\n"
+        "- **최근 점검** — 마지막 점검일 + 결과(`PASS` 양호 / `FAIL` 불량 / `DUE` 점검 도래).\n"
+        "  · `FAIL`·`DUE` → **안전점검 관리**에서 점검·조치 진행.\n"
+        "- **점검 이력** — 완료 점검 횟수. 클릭 시 **결과 이력·점검 일정·구역 통보서** 상세.\n"
+        "- **작업** — **[속성]**: QR 미리보기·위치 변경 등 장비 관리."
+    )
+
+
 # 장비별 완료 점검 결과 이력 (task_id로 정밀 매칭)
 def _equipment_history(eq, tasks, defs) -> list[tuple]:
     """장비의 완료 점검 결과 이력을 최신순으로 반환.
@@ -549,6 +566,12 @@ def render() -> None:
                     )
 
     # ---------- 테이블 (st.columns 기반) ----------
+    # 헤더 우측 상단에 컬럼 설명 ❓ 팝오버 (목적 + 조치 방법)
+    _sp, _hlp = st.columns([6, 1], vertical_alignment="bottom")
+    with _hlp:
+        with st.popover("❓ 설명", use_container_width=True,
+                        help="각 컬럼의 목적과 조치 방법"):
+            st.markdown(_columns_help_md(), unsafe_allow_html=True)
     st.markdown(_table_header_html(), unsafe_allow_html=True)
 
     # 점검 이력 계산용 전체 task/deficiency 한 번만 로드
