@@ -599,7 +599,7 @@ def add_task_to_round_dialog(round_id: str) -> None:
     # 진입 방식 — 장비 선택(사전 위치 설정됨) / 📍 점검 위치 등록(도면)
     # v1.7: '직접 선택'과 'QR 스캔'은 둘 다 등록 장비를 고르는 동일 흐름이라 한 탭으로 통합.
     #        화기작업 구간은 별도 탭 없이 '점검 위치 등록 → 신규 위치'로 통합 (탭 중복 제거)
-    tab_eq, tab_map = st.tabs(["장비 선택 (사전 위치 설정됨)", "📍 점검 위치 등록"])
+    tab_eq, tab_map = st.tabs(["장비 선택 (사전 위치 설정됨)", "점검 위치 등록"])
     sel_eq = None        # Equipment (장비 기반 추가)
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
     with tab_eq:
@@ -609,7 +609,7 @@ def add_task_to_round_dialog(round_id: str) -> None:
         )
         st.caption(
             "💡 도면에 정의되지 않은 작업 구간(화기작업 등)은 "
-            "**📍 점검 위치 등록 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
+            "**점검 위치 등록 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
         )
 
         # 1) 목록에서 직접 선택 (기본 경로)
