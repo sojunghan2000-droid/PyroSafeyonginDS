@@ -435,5 +435,5 @@ Malfunction      별지9 row. malfunction_id, 시설구분, 발생일, 오동작
 *본 PRD는 2026-07-01 기준 코드베이스(`app.py`, `lib/`, `pages_app/`)의 실제 구현을 근거로 작성되었다.
 v1.5+ 변경 — 회차 모델, 점검 인라인, 3분기 결과(양호/불량/오동작), Supabase 영속화 완료, 도면 잠금 기본 ON, 상단바 정렬 — 모두 반영.
 v1.6 변경 — 일일 점검 주기, 🔥 화기작업구간/📦 가설컨테이너 사무실 점검 종류, 불량 사유 카탈로그(`DEFECT_CODES_*`), 조치 사진 의무화, 회차 등록 일일 자유 등록 자동 활성화 — 모두 반영.
-v1.7 변경 — 세부 checklist 12+7(OK/NG/N/A), [+ Task 추가] 화기작업 구간 별도 탭 제거(도면 신규 위치로 통합), [+ Task 추가] 장비 선택 탭 통합(QR+목록), 탭명 '도면 선택'→'점검 위치 등록', 메뉴명 '안전점검'→'안전점검 관리', 사이드바 번호→이모지(📊🧯🔍🛠️📄⚙️).
+v1.7 변경 — 세부 checklist 12+7(OK/NG/N/A), [+ Task 추가] 화기작업 구간 별도 탭 제거(도면 신규 위치로 통합), [+ Task 추가] 장비 선택 탭 통합(QR+목록), 탭명 '도면 선택'→'점검 위치 등록', 메뉴명 '안전점검'→'안전점검 관리', 사이드바 번호→이모지(🏠🧯🔍🛠️📄⚙️).
 v1.7 변경 — 세부 checklist 시스템(`CHECKLIST_FIRE_WORK` 12항목 / `CHECKLIST_CONTAINER` 7항목), `Deficiency.checklist_items: dict[str, str]`, `checklist_for()`·`checklist_flat_keys()` 매핑 헬퍼, 점검 시작 인라인 OK/NG/N/A 라디오 + NG 있으면 불량 강제, 별지5 PDF NG 항목 요약, DB 마이그레이션(`supabase_migration_v1_7_checklist_items.sql`) — 모두 반영.*

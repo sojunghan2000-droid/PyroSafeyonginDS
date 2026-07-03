@@ -851,7 +851,7 @@ def _render_avatar_menu() -> None:
 # ---------- Sidebar ----------
 
 NAV_PAGES = [
-    ("dashboard", "대시보드", "📊"),
+    ("dashboard", "대시보드", "🏠"),
     ("equipment", "시설 관리", "🧯"),
     ("tasks", "안전점검 관리", "🔍"),
     ("deficiencies", "작업 조치 관리", "🛠️"),
