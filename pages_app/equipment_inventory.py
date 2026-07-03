@@ -119,7 +119,7 @@ def _render_table_header() -> None:
     )
     with st.container(key="eqhdr"):
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
-        cols[0].markdown(f"<div style='{_HDR_LABEL_CSS}'>위치 ID</div>",
+        cols[0].markdown(f"<div style='{_HDR_LABEL_CSS}'>장비 ID</div>",
                          unsafe_allow_html=True)
         cols[1].markdown(f"<div style='{_HDR_LABEL_CSS}'>시설 종류</div>",
                          unsafe_allow_html=True)
@@ -607,9 +607,10 @@ def render() -> None:
     for e in rows:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         with cols[0]:
+            # 장비 ID(EQ-NNNN) — 자산 대장의 대표 식별자 (구 위치 ID 자리)
             st.markdown(
                 f"<div style='font-weight:600; color:#0F172A; "
-                f"text-align:center;'>{e.location_id}</div>",
+                f"text-align:center;'>{e.equipment_id}</div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
