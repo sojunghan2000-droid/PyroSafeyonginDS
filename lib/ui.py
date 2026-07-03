@@ -890,8 +890,9 @@ def render_sidebar(active: str) -> str:
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
         else:
-            # 확장 모드: 브랜드(좌) + « 토글(우)을 같은 줄에 배치 (상단 정렬)
-            bcol, tcol = st.columns([1, 0.32], vertical_alignment="top")
+            # 확장 모드: 브랜드(좌) + « 토글(우)을 같은 줄에 배치.
+            # vertical_alignment=center 로 브랜드 2줄 블록 세로 중앙에 «를 맞춰 상하 균형
+            bcol, tcol = st.columns([1, 0.34], vertical_alignment="center")
             with bcol:
                 st.markdown(
                     """
