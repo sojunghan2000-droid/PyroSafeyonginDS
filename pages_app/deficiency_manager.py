@@ -13,8 +13,8 @@ from lib.inspection_dialog import (
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 통합 row 컬럼 비율 — 점검 ID + 작업 ID 컬럼 포함 (10개)
-COL_RATIOS = [0.9, 1.0, 1.0, 1.3, 2.0, 1.0, 1.0, 1.1, 1.0, 1.1]
+# 통합 row 컬럼 비율 — 점검 ID·작업 ID를 맨 앞 1·2열로 (10개)
+COL_RATIOS = [1.1, 1.0, 0.9, 1.0, 1.0, 1.3, 2.0, 1.0, 1.0, 1.1]
 
 
 @dataclass
@@ -116,6 +116,8 @@ def _table_header() -> str:
         "gap: 0.4rem; padding: 0.6rem 0.4rem; "
         "color:#64748B; font-size:0.78rem; font-weight:600; "
         "border-bottom:1px solid #E2E8F0;'>"
+        "<div>점검 ID</div>"
+        "<div>작업 ID</div>"
         "<div>구분</div>"
         "<div>일자</div>"
         "<div>장소·시설</div>"
@@ -123,8 +125,6 @@ def _table_header() -> str:
         "<div>내용</div>"
         "<div>상태</div>"
         "<div>통보서 번호</div>"
-        "<div>점검 ID</div>"
-        "<div>작업 ID</div>"
         "<div>작업</div>"
         "</div>"
     )
@@ -234,20 +234,33 @@ def render() -> None:
     for r in rows:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         with cols[0]:
-            st.markdown(_type_badge(r.type), unsafe_allow_html=True)
+            rid_color = "#1D4ED8" if r.round_id != "-" else "#94A3B8"
+            st.markdown(
+                f"<span style='color:{rid_color}; font-size:0.82rem; "
+                f"font-weight:600;'>{r.round_id}</span>",
+                unsafe_allow_html=True,
+            )
         with cols[1]:
+            tid_color = "#334155" if r.task_id != "-" else "#94A3B8"
+            st.markdown(
+                f"<span style='color:{tid_color}; font-size:0.85rem;'>{r.task_id}</span>",
+                unsafe_allow_html=True,
+            )
+        with cols[2]:
+            st.markdown(_type_badge(r.type), unsafe_allow_html=True)
+        with cols[3]:
             st.markdown(f"<span style='color:#334155;'>{fmt_date(r.date)}</span>",
                         unsafe_allow_html=True)
-        with cols[2]:
+        with cols[4]:
             st.markdown(f"<b style='color:#0F172A;'>{r.location}</b>",
                         unsafe_allow_html=True)
-        with cols[3]:
+        with cols[5]:
             st.markdown(f"<span style='color:#334155;'>{r.category}</span>",
                         unsafe_allow_html=True)
-        with cols[4]:
+        with cols[6]:
             st.markdown(f"<span style='color:#0F172A;'>{r.content}</span>",
                         unsafe_allow_html=True)
-        with cols[5]:
+        with cols[7]:
             if r.status == "완료":
                 st.markdown("<span style='color:#16A34A; font-weight:600;'>✓ 완료</span>",
                             unsafe_allow_html=True)
@@ -262,23 +275,10 @@ def render() -> None:
             else:
                 st.markdown(f"<span style='color:#334155;'>{r.status}</span>",
                             unsafe_allow_html=True)
-        with cols[6]:
+        with cols[8]:
             no_color = "#1D4ED8" if r.notice_no != "-" else "#94A3B8"
             st.markdown(
                 f"<span style='color:{no_color}; font-weight:600;'>{r.notice_no}</span>",
-                unsafe_allow_html=True,
-            )
-        with cols[7]:
-            rid_color = "#1D4ED8" if r.round_id != "-" else "#94A3B8"
-            st.markdown(
-                f"<span style='color:{rid_color}; font-size:0.82rem; "
-                f"font-weight:600;'>{r.round_id}</span>",
-                unsafe_allow_html=True,
-            )
-        with cols[8]:
-            tid_color = "#334155" if r.task_id != "-" else "#94A3B8"
-            st.markdown(
-                f"<span style='color:{tid_color}; font-size:0.85rem;'>{r.task_id}</span>",
                 unsafe_allow_html=True,
             )
         with cols[9]:
