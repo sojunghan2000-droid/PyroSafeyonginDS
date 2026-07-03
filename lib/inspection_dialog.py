@@ -212,7 +212,7 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
-        control_toggle, floor_legend_html, plotly_config,
+        control_toggle, legend_html, plotly_config,
     )
 
     ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
@@ -248,7 +248,13 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             help="ON 시 도면 빈 곳 클릭으로 신규 위치 좌표 픽업 (기본 OFF)",
         )
     with lc:
-        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+        st.markdown(legend_html([
+            ("#2563EB", "매칭 장비"),
+            ("#CBD5E1", "매핑 외 장비"),
+            ("#64748B", "이미 포함"),
+            ("#94A3B8", "빈 spot(◇)"),
+            ("#3B82F6", "신규 위치(◇)"),
+        ]), unsafe_allow_html=True)
 
     img_path = ASSETS_DIR / f"{floor}.png"
     if not img_path.exists():
@@ -916,7 +922,7 @@ def task_inspect_inline(task_id: str) -> None:
             from pathlib import Path
             import plotly.graph_objects as go
             from lib.floor_widget import (
-                control_toggle, floor_legend_html, lock_overlay_css, plotly_config,
+                control_toggle, legend_html, lock_overlay_css, plotly_config,
             )
 
             all_spots = data.load_spots()
@@ -946,7 +952,10 @@ def task_inspect_inline(task_id: str) -> None:
                             f"tsk_loc_map_{task_id}", default_locked=True,
                         )
                     with lc:
-                        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+                        st.markdown(legend_html([
+                            ("#2563EB", "현재 선택 위치"),
+                            ("#FDE68A", "다른 spot (클릭해 정정)"),
+                        ]), unsafe_allow_html=True)
 
                     uri = "data:image/png;base64," + base64.b64encode(
                         img_path.read_bytes()).decode()

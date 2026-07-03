@@ -13,7 +13,7 @@ import streamlit as st
 
 from lib import auth, data
 from lib.data import Spot
-from lib.floor_widget import control_toggle, floor_legend_html, plotly_config
+from lib.floor_widget import control_toggle, legend_html, plotly_config
 from lib.ui import badge, page_header
 
 # 새 8개 층 (대시보드 Location 탭과 동일 순서)
@@ -142,13 +142,16 @@ def _spot_edit_dialog(spot_id: str) -> None:
         st.warning(f"{s.floor} 도면 이미지가 없습니다.")
     else:
         from lib.floor_widget import (
-            control_toggle, floor_legend_html, lock_overlay_css, plotly_config,
+            control_toggle, legend_html, lock_overlay_css, plotly_config,
         )
         cc, lc = st.columns([1.2, 5])
         with cc:
             locked = control_toggle(f"edit_map_{spot_id}", default_locked=True)
         with lc:
-            st.markdown(floor_legend_html(), unsafe_allow_html=True)
+            st.markdown(legend_html([
+                ("#2563EB", "현재 spot"),
+                ("#FDE68A", "다른 spot"),
+            ]), unsafe_allow_html=True)
 
         # CSS는 plotly_chart 전에 주입 — timing 안정성
         if locked:
@@ -375,7 +378,10 @@ def _spot_define_dialog() -> None:
     with ctrl_col:
         locked = control_toggle(f"admin_dlg_{floor}", default_locked=True)
     with leg_col:
-        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+        st.markdown(legend_html([
+            ("#F59E0B", "기존 위치"),
+            ("#3B82F6", "클릭 가능 영역(좌표 픽업)"),
+        ]), unsafe_allow_html=True)
 
     if locked:
         from lib.floor_widget import lock_overlay_css
