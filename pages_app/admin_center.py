@@ -603,11 +603,11 @@ def _spot_master_tab() -> None:
         return
 
     used = {e.spot_id for e in data.load_equipment() if e.spot_id}
-    # 컬럼 7개: ID / 방이름 / 비고 / 좌표 / 사용 / [속성변경] / [삭제]
-    cols_ratio = [1.3, 1.9, 1.4, 0.9, 0.7, 0.9, 0.7]
+    # 컬럼 8개: 위치 ID / spot ID / 방이름 / 비고 / 좌표 / 사용 / [속성변경] / [삭제]
+    cols_ratio = [0.9, 1.25, 1.6, 1.2, 0.85, 0.7, 0.95, 0.7]
     header = st.columns(cols_ratio)
     for col, txt in zip(header,
-                        ["위치 ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
+                        ["위치 ID", "spot ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
         col.markdown(
             f"<div style='color:#64748B; font-size:0.78rem; font-weight:600;'>{txt}</div>",
             unsafe_allow_html=True,
@@ -629,37 +629,40 @@ def _spot_master_tab() -> None:
             f"font-size:0.68rem; font-weight:600;'>{s.floor}</span>"
             if floor == "전체" else ""
         )
-        # 위치 ID(B2-01) 메인 + 원본 spot ID(SPOT-B2-001) 작게 병기
+        # 위치 ID(B2-01)와 원본 spot ID(SPOT-B2-001)를 별도 컬럼으로 분리
         loc_id = data.location_id_from_spot(s.spot_id)
         row[0].markdown(
             f"<span style='font-weight:600; color:#0F172A;'>{loc_id}</span>"
-            f"{floor_badge}{temp_badge}"
-            f"<div style='color:#94A3B8; font-size:0.7rem;'>{s.spot_id}</div>",
+            f"{floor_badge}{temp_badge}",
             unsafe_allow_html=True,
         )
-        row[1].markdown(s.room_name)
-        row[2].markdown(
+        row[1].markdown(
+            f"<span style='color:#64748B; font-size:0.82rem;'>{s.spot_id}</span>",
+            unsafe_allow_html=True,
+        )
+        row[2].markdown(s.room_name)
+        row[3].markdown(
             f"<span style='color:#475569;'>{s.notes or '-'}</span>",
             unsafe_allow_html=True,
         )
-        row[3].markdown(
+        row[4].markdown(
             f"<span style='color:#334155; font-size:0.85rem;'>"
             f"{s.x_pct:.1f} / {s.y_pct:.1f}</span>",
             unsafe_allow_html=True,
         )
-        row[4].markdown(
+        row[5].markdown(
             "<span style='background:#FEF3C7; color:#92400E; padding:0.1rem 0.4rem; "
             "border-radius:6px; font-size:0.74rem;'>사용 중</span>"
             if in_use else
             "<span style='color:#94A3B8; font-size:0.78rem;'>미사용</span>",
             unsafe_allow_html=True,
         )
-        with row[5]:
+        with row[6]:
             if st.button("속성 변경", key=f"admin_spot_edit_{s.spot_id}",
                          use_container_width=True):
                 st.session_state["admin_spot_edit_id"] = s.spot_id
                 st.rerun()
-        with row[6]:
+        with row[7]:
             if st.button("삭제", key=f"admin_spot_del_{s.spot_id}",
                          use_container_width=True, disabled=in_use):
                 data.delete_spot(s.spot_id)
