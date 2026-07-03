@@ -87,7 +87,7 @@ def _table_header_html() -> str:
         "<div>시설 종류</div>"
         "<div>위치 등록</div>"
         "<div>QR 상태</div>"
-        "<div>최근 점검</div>"
+        "<div style='text-align:center;'>최근 점검</div>"
         "<div>점검 이력</div>"
         "<div>작업</div>"
         "</div>"
@@ -610,11 +610,12 @@ def render() -> None:
         with cols[3]:
             st.markdown(badge(e.qr_status), unsafe_allow_html=True)
         with cols[4]:
-            # 최근 점검일 + 건강상태(점검 결과) 병합
+            # 최근 점검일 + 건강상태(점검 결과) 병합 — 가운데 정렬
             date_txt = fmt_date(e.last_inspection) if e.last_inspection else "미점검"
             st.markdown(
-                f"<div style='color:#334155;'>{date_txt}</div>"
-                f"<div style='margin-top:0.15rem;'>{badge(e.health_status)}</div>",
+                f"<div style='color:#334155; text-align:center;'>{date_txt}</div>"
+                f"<div style='margin-top:0.15rem; text-align:center;'>"
+                f"{badge(e.health_status)}</div>",
                 unsafe_allow_html=True,
             )
         with cols[5]:
