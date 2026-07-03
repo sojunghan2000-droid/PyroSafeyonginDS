@@ -621,27 +621,13 @@ def _spot_master_tab() -> None:
     for s in spots:
         row = st.columns(cols_ratio, vertical_alignment="center")
         in_use = s.spot_id in used
-        temp_badge = (
-            " <span style='background:#DBEAFE; color:#1E3A8A; padding:0.05rem 0.4rem; "
-            "border-radius:6px; font-size:0.68rem; font-weight:700;'>신규</span>"
-            if s.is_temporary else ""
-        )
-        floor_badge = (
-            f" <span style='background:#F1F5F9; color:#475569; "
-            f"padding:0.05rem 0.4rem; border-radius:6px; "
-            f"font-size:0.68rem; font-weight:600;'>{s.floor}</span>"
-            if floor == "전체" else ""
-        )
-        # 이 spot에 배치된 장비 ID (없으면 "-") + 층/신규 배지
+        # 이 spot에 배치된 장비 ID (없으면 "-"). 층은 spot ID, 신규는 [승인] 버튼으로 식별
         eq_id = eq_by_spot.get(s.spot_id)
         eq_disp = (
             f"<span style='font-weight:600; color:#0F172A;'>{eq_id}</span>"
             if eq_id else "<span style='color:#94A3B8;'>-</span>"
         )
-        row[0].markdown(
-            f"{eq_disp}{floor_badge}{temp_badge}",
-            unsafe_allow_html=True,
-        )
+        row[0].markdown(eq_disp, unsafe_allow_html=True)
         row[1].markdown(
             f"<span style='color:#64748B; font-size:0.82rem;'>{s.spot_id}</span>",
             unsafe_allow_html=True,
