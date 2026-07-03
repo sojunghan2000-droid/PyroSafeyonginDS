@@ -1532,7 +1532,9 @@ def _eq_new_spot_map(floor: str):
     import base64
     from pathlib import Path
     import plotly.graph_objects as go
-    from lib.floor_widget import control_toggle, plotly_config, lock_overlay_css
+    from lib.floor_widget import (
+        control_toggle, plotly_config, lock_overlay_css, legend_html,
+    )
 
     ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
@@ -1594,6 +1596,12 @@ def _eq_new_spot_map(floor: str):
         dragmode="pan", showlegend=False, clickmode="event+select",
         uirevision=f"eq_new_{floor}",
     )
+
+    st.markdown(legend_html([
+        ("#2563EB", "현재 선택 위치(★)"),
+        ("#F59E0B", "기존 위치"),
+        ("#93C5FD", "클릭 가능 영역(좌표 픽업)"),
+    ]), unsafe_allow_html=True)
 
     # 좌표 픽업이 주목적이라 기본 잠금 해제 (바로 클릭 가능)
     locked = control_toggle("eq_new_spot_map", default_locked=False)

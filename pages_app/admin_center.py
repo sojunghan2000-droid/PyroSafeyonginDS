@@ -496,9 +496,12 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
             return
         st.markdown(
             f"<div style='margin-top:0.4rem; color:#475569; font-size:0.85rem;'>"
-            f"🗺️ <b>{floor}</b> 도면 · spot {len(spots)}개 (노란 점)</div>",
+            f"🗺️ <b>{floor}</b> 도면 · 등록된 위치 {len(spots)}개</div>",
             unsafe_allow_html=True,
         )
+        st.markdown(legend_html([
+            ("#F59E0B", "등록된 위치(spot)"),
+        ]), unsafe_allow_html=True)
         st.plotly_chart(
             fig, use_container_width=True,
             config={"displayModeBar": False, "staticPlot": True},
@@ -512,6 +515,9 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
         "🗺️ 전 층 미니맵 — <b>[이 층 보기]</b>로 해당 층 상세로 이동</div>",
         unsafe_allow_html=True,
     )
+    st.markdown(legend_html([
+        ("#F59E0B", "등록된 위치(spot)"),
+    ]), unsafe_allow_html=True)
     all_spots = spots  # 이미 전체 로드됨
     by_floor: dict[str, list[Spot]] = {f: [] for f in ADMIN_FLOORS}
     for s in all_spots:
