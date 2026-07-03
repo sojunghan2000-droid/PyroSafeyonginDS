@@ -11,8 +11,8 @@ from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 테이블 컬럼 비율 — v1.7: 7컬럼 (위치 등록 별도 컬럼, 최근 점검일+건강상태 병합, 작업 상태→점검 이력)
-COL_RATIOS = [1.0, 1.6, 0.85, 0.85, 1.3, 0.95, 0.85]
+# 테이블 컬럼 비율 — v1.7: 7컬럼. 위치 등록/QR/최근 점검은 헤더에 ▾ 팝오버가 붙어 폭 여유 확보
+COL_RATIOS = [1.0, 1.5, 1.0, 1.0, 1.3, 0.9, 0.8]
 
 # 장비 건강상태 마커 색 (양호/불량/점검도래)
 _EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
@@ -76,38 +76,63 @@ def _set_eq_floor(target: str) -> None:
     st.session_state["eq_floor_filter"] = target
 
 
-def _hdr_hint(tip: str) -> str:
-    """컬럼 헤더 옆 작고 희미한 ? — hover(마우스 오버) 시 설명 툴팁 표시."""
-    return (
-        f"<span title=\"{tip}\" style='color:#CBD5E1; font-size:0.68rem; "
-        f"font-weight:700; cursor:help; margin-left:0.15rem;'>?</span>"
+# 3개 컬럼 헤더 ▾ 팝오버 내용 (뜻 + 조치) — 짧게 유지
+_HINT_LOC_MD = ("**위치 등록** — 도면(spot)에 좌표가 등록됐는지 여부.\n\n"
+                "미등록 → **[속성]** 또는 위치 마스터에서 도면 위치 지정.")
+_HINT_QR_MD = ("**QR 상태** — PENDING(스티커 부착·첫 스캔 전) / "
+               "ASSIGNED(현장 스캔 완료).\n\n"
+               "PENDING → QR 스티커 부착 후 현장에서 스캔하면 자동 전환.")
+_HINT_INSP_MD = ("**최근 점검** — 마지막 점검일 + 결과(PASS 양호 / FAIL 불량 / "
+                 "DUE 점검 도래).\n\n"
+                 "FAIL·DUE → 안전점검 관리에서 점검·조치 진행.")
+
+_HDR_LABEL_CSS = "color:#64748B; font-size:0.78rem; font-weight:600;"
+
+
+def _hdr_with_hint(col, label: str, tip_md: str, center: bool = False) -> None:
+    """헤더 컬럼: 라벨(텍스트, 클릭 불가) + 옆에 작은 ▾ 설명 팝오버."""
+    with col:
+        lc, pc = st.columns([1, 0.42], vertical_alignment="center", gap="small")
+        align = "center" if center else "left"
+        lc.markdown(
+            f"<div style='{_HDR_LABEL_CSS} text-align:{align};'>{label}</div>",
+            unsafe_allow_html=True,
+        )
+        with pc:
+            # 라벨 "​"(폭 0) → 자동 ExpandMore ▾ 만 보임
+            with st.popover("​", use_container_width=False):
+                st.markdown(tip_md)
+
+
+def _render_table_header() -> None:
+    """테이블 헤더 — 라벨 + 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버."""
+    st.markdown(
+        "<style>"
+        ".st-key-eqhdr [data-testid='stPopoverButton']{"
+        "background:transparent!important;border:none!important;box-shadow:none!important;"
+        "padding:0 0.1rem!important;min-height:0!important;height:1.15rem!important;"
+        "color:#94A3B8!important;}"
+        ".st-key-eqhdr [data-testid='stPopoverButton']:hover{color:#334155!important;}"
+        "</style>",
+        unsafe_allow_html=True,
     )
-
-
-# 3개 컬럼 헤더 ? 툴팁 (뜻 + 조치, &#10; = 줄바꿈)
-_HINT_LOC = ("도면(spot)에 좌표가 등록됐는지 여부.&#10;"
-             "미등록 → [속성] 또는 위치 마스터에서 도면 위치 지정.")
-_HINT_QR = ("PENDING: 스티커 부착·첫 스캔 전 / ASSIGNED: 현장 스캔 완료.&#10;"
-            "PENDING → QR 스티커 부착 후 현장에서 스캔하면 자동 전환.")
-_HINT_INSP = ("마지막 점검일 + 결과(PASS 양호 / FAIL 불량 / DUE 점검 도래).&#10;"
-              "FAIL·DUE → 안전점검 관리에서 점검·조치 진행.")
-
-
-def _table_header_html() -> str:
-    return (
-        "<div style='display:grid; "
-        f"grid-template-columns: {' '.join(f'{r}fr' for r in COL_RATIOS)}; "
-        "gap: 0.4rem; padding: 0.6rem 0.4rem; "
-        "color:#64748B; font-size:0.78rem; font-weight:600; "
-        "border-bottom:1px solid #E2E8F0;'>"
-        "<div>위치 ID</div>"
-        "<div>시설 종류</div>"
-        f"<div>위치 등록{_hdr_hint(_HINT_LOC)}</div>"
-        f"<div>QR 상태{_hdr_hint(_HINT_QR)}</div>"
-        f"<div style='text-align:center;'>최근 점검{_hdr_hint(_HINT_INSP)}</div>"
-        "<div>점검 이력</div>"
-        "<div>작업</div>"
-        "</div>"
+    with st.container(key="eqhdr"):
+        cols = st.columns(COL_RATIOS, vertical_alignment="center")
+        cols[0].markdown(f"<div style='{_HDR_LABEL_CSS}'>위치 ID</div>",
+                         unsafe_allow_html=True)
+        cols[1].markdown(f"<div style='{_HDR_LABEL_CSS}'>시설 종류</div>",
+                         unsafe_allow_html=True)
+        _hdr_with_hint(cols[2], "위치 등록", _HINT_LOC_MD)
+        _hdr_with_hint(cols[3], "QR 상태", _HINT_QR_MD)
+        _hdr_with_hint(cols[4], "최근 점검", _HINT_INSP_MD, center=True)
+        cols[5].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 이력</div>",
+                         unsafe_allow_html=True)
+        cols[6].markdown(f"<div style='{_HDR_LABEL_CSS}'>작업</div>",
+                         unsafe_allow_html=True)
+    st.markdown(
+        "<hr style='margin:0.15rem 0 0.1rem; border:none; "
+        "border-top:1px solid #E2E8F0;'>",
+        unsafe_allow_html=True,
     )
 
 
@@ -568,8 +593,8 @@ def render() -> None:
                     )
 
     # ---------- 테이블 (st.columns 기반) ----------
-    # 컬럼 설명은 위치 등록/QR 상태/최근 점검 헤더 옆 ? 툴팁으로 제공
-    st.markdown(_table_header_html(), unsafe_allow_html=True)
+    # 헤더 — 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버 (위젯)
+    _render_table_header()
 
     # 점검 이력 계산용 전체 task/deficiency 한 번만 로드
     all_tasks = data.load_tasks()
