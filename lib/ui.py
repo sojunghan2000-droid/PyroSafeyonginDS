@@ -206,7 +206,8 @@ THEME_CSS = """
         background: #F8FAFC;
         border-right: 1px solid #E2E8F0;
     }
-    section[data-testid="stSidebar"] .block-container { padding-top: 1.5rem; }
+    /* padding-left 1.75rem = 상단바(.ps-topbar) 좌측 여백 → PyroSafe 좌측을 Samsung C&T와 정렬 */
+    section[data-testid="stSidebar"] .block-container { padding-top: 1.5rem; padding-left: 1.75rem; }
 
     /* Streamlit 네이티브 사이드바 collapse 버튼/헤더 숨김 (자체 mini/expanded 토글 사용) */
     [data-testid="stSidebarCollapseButton"] { display: none !important; }

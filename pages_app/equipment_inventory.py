@@ -488,7 +488,7 @@ def render() -> None:
     qr_hint = "QR 부착률" if qr_coverage >= 100 else "미부착 장비 있음"
     render_kpi_row([
         ("전체 시설", f"{kpi['total']:,}", f"이번 달 +{kpi['new_this_month']}건", "default"),
-        ("최근 점검 (지난 48시간)", f"{kpi['recently_inspected']:,}", "", "default"),
+        ("최근 점검 (지난 48시간)", f"{kpi['recently_inspected']:,}", "이틀 내 점검 완료", "default"),
         ("미조치 항목", f"{kpi['pending_issues']}", "긴급 점검 알림", "alert"),
         ("QR 적용률", f"{qr_coverage:.1f}%", qr_hint, qr_variant),
     ])
