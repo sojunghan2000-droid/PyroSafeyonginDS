@@ -86,16 +86,17 @@ _HINT_INSP_MD = ("**최근 점검** — 마지막 점검일 + 결과(PASS 양호
                  "DUE 점검 도래).\n\n"
                  "FAIL·DUE → 안전점검 관리에서 점검·조치 진행.")
 
-_HDR_LABEL_CSS = "color:#64748B; font-size:0.78rem; font-weight:600;"
+_HDR_LABEL_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
 
 
-def _hdr_with_hint(col, label: str, tip_md: str, center: bool = False) -> None:
-    """헤더 컬럼: 라벨(텍스트, 클릭 불가) + 옆에 작은 ▾ 설명 팝오버."""
+def _hdr_with_hint(col, label: str, tip_md: str) -> None:
+    """헤더 컬럼: 라벨(가운데) + 옆에 작은 ▾ 설명 팝오버.
+    [spacer, 라벨, ▾] 균형 배치로 라벨이 컬럼 정중앙에 오게 한다."""
     with col:
-        lc, pc = st.columns([1, 0.42], vertical_alignment="center", gap="small")
-        align = "center" if center else "left"
+        sp, lc, pc = st.columns([0.32, 1, 0.32], vertical_alignment="center",
+                                gap="small")
         lc.markdown(
-            f"<div style='{_HDR_LABEL_CSS} text-align:{align};'>{label}</div>",
+            f"<div style='{_HDR_LABEL_CSS}'>{label}</div>",
             unsafe_allow_html=True,
         )
         with pc:
@@ -124,7 +125,7 @@ def _render_table_header() -> None:
                          unsafe_allow_html=True)
         _hdr_with_hint(cols[2], "위치 등록", _HINT_LOC_MD)
         _hdr_with_hint(cols[3], "QR 상태", _HINT_QR_MD)
-        _hdr_with_hint(cols[4], "최근 점검", _HINT_INSP_MD, center=True)
+        _hdr_with_hint(cols[4], "최근 점검", _HINT_INSP_MD)
         cols[5].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 이력</div>",
                          unsafe_allow_html=True)
         cols[6].markdown(f"<div style='{_HDR_LABEL_CSS}'>작업</div>",
@@ -607,13 +608,16 @@ def render() -> None:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         with cols[0]:
             st.markdown(
-                f"<span style='font-weight:600; color:#0F172A;'>{e.location_id}</span>",
+                f"<div style='font-weight:600; color:#0F172A; "
+                f"text-align:center;'>{e.location_id}</div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
             st.markdown(
-                f"<div style='font-weight:600; color:#0F172A;'>{e.equipment_name}</div>"
-                f"<div style='color:#64748B; font-size:0.8rem;'>SN: {e.serial}</div>",
+                f"<div style='font-weight:600; color:#0F172A; "
+                f"text-align:center;'>{e.equipment_name}</div>"
+                f"<div style='color:#64748B; font-size:0.8rem; "
+                f"text-align:center;'>SN: {e.serial}</div>",
                 unsafe_allow_html=True,
             )
         with cols[2]:
@@ -626,9 +630,11 @@ def render() -> None:
                 "<span style='color:#D97706; font-weight:600; "
                 "font-size:0.82rem;'>미등록</span>"
             )
-            st.markdown(loc_txt, unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;'>{loc_txt}</div>",
+                        unsafe_allow_html=True)
         with cols[3]:
-            st.markdown(badge(e.qr_status), unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;'>{badge(e.qr_status)}</div>",
+                        unsafe_allow_html=True)
         with cols[4]:
             # 최근 점검일 + 건강상태(점검 결과) 병합 — 가운데 정렬
             date_txt = fmt_date(e.last_inspection) if e.last_inspection else "미점검"
