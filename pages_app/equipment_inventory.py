@@ -11,8 +11,8 @@ from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 테이블 컬럼 비율 (총합 = 1) — 작업 상태 컬럼 신설
-COL_RATIOS = [1.0, 1.8, 0.9, 1.0, 0.9, 1.2, 0.9]
+# 테이블 컬럼 비율 — v1.7: 6컬럼 (최근 점검일+건강상태 병합, 작업 상태→점검 이력)
+COL_RATIOS = [1.15, 1.7, 0.85, 1.35, 1.0, 0.85]
 
 # 장비 건강상태 마커 색 (양호/불량/점검도래)
 _EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
@@ -86,60 +86,36 @@ def _table_header_html() -> str:
         "<div>위치 ID</div>"
         "<div>시설 종류</div>"
         "<div>QR 상태</div>"
-        "<div>최근 점검일</div>"
-        "<div>Inspection Status</div>"
-        "<div>작업 상태</div>"
+        "<div>최근 점검</div>"
+        "<div>점검 이력</div>"
         "<div>작업</div>"
         "</div>"
     )
 
 
-# 작업 상태 칩 — 색상 + 라벨 우선순위 매핑
-def _work_chip(eq, tasks, notices) -> tuple[str, str]:
-    """장비별 가장 시급한 단건 칩 (color, label).
-    우선순위: 통보서 대기 > 지연 > 진행 > 예정 > 최근 완료 > 작업 없음."""
-    # 통보서 대기 (floor/zone 매칭 — 장비-통보서 직접 FK가 없으므로 위치 기준)
-    pending_notices = sum(
-        1 for n in notices
-        if not n.action_done and n.floor == eq.floor and n.zone == eq.zone
-    )
-    if pending_notices:
-        return "#DC2626", f"통보서 대기 {pending_notices}"
-
-    # 장비 매칭 task — equipment_label에 location_id 또는 equipment_name 포함
-    matching = [
-        t for t in tasks
+# 장비별 완료 점검 결과 이력 (task_id로 정밀 매칭)
+def _equipment_history(eq, tasks, defs) -> list[tuple]:
+    """장비의 완료 점검 결과 이력을 최신순으로 반환.
+    이 장비에 매칭되는 task의 task_id로 Deficiency를 정밀 매칭 (구역 단위 아님).
+    각 원소: (inspection_date, types_str, is_good, detail, deficiency)."""
+    task_ids = {
+        t.task_id for t in tasks
         if eq.location_id in t.equipment_label or eq.equipment_name in t.equipment_label
-    ]
-    overdue = [t for t in matching if t.status == "Overdue"]
-    if overdue:
-        return "#DC2626", f"지연 {len(overdue)}"
-    in_prog = [t for t in matching if t.status == "In Progress"]
-    if in_prog:
-        return "#F97316", f"진행 {len(in_prog)}"
-    scheduled = [t for t in matching if t.status == "Scheduled"]
-    if scheduled:
-        return "#3B82F6", f"예정 {len(scheduled)}"
-    completed = [t for t in matching if t.status == "Completed"]
-    if completed:
-        last = max(t.due_date for t in completed)
-        days = (data.TODAY - last).days
-        return "#10B981", f"완료 ({days}d 전)" if days >= 0 else "완료"
-    return "#94A3B8", "작업 없음"
+    }
+    rows = []
+    for d in defs:
+        if d.task_id and d.task_id in task_ids:
+            is_good = (d.issue or "").strip() in ("", "양호")
+            detail = "양호" if is_good else (d.issue or "지적사항")
+            types_str = " / ".join(d.inspection_types) if d.inspection_types else "-"
+            rows.append((d.inspection_date, types_str, is_good, detail, d))
+    rows.sort(key=lambda r: r[0] or data.TODAY, reverse=True)
+    return rows
 
 
-def _work_chip_html(color: str, label: str) -> str:
-    return (
-        f"<div style='display:inline-block; padding:0.18rem 0.55rem; "
-        f"border:1px solid {color}; color:{color}; background:{color}10; "
-        f"border-radius:999px; font-size:0.78rem; font-weight:600;'>"
-        f"{label}</div>"
-    )
-
-
-@st.dialog("점검 현황", width="large")
+@st.dialog("장비 점검 이력", width="large")
 def _status_dialog(equipment_id: str) -> None:
-    """장비별 점검 일정·지적사항·통보서 이력 (읽기 전용)."""
+    """장비별 점검 결과 이력·점검 일정·구역 통보서 (읽기 전용)."""
     eq = next((x for x in data.load_equipment() if x.equipment_id == equipment_id), None)
     if not eq:
         st.error("장비를 찾을 수 없습니다.")
@@ -154,7 +130,7 @@ def _status_dialog(equipment_id: str) -> None:
         if eq.location_id in t.equipment_label or eq.equipment_name in t.equipment_label
     ]
     matching_notices = [n for n in notices if n.floor == eq.floor and n.zone == eq.zone]
-    matching_defs = [d for d in defs if d.floor == eq.floor and d.zone == eq.zone]
+    history = _equipment_history(eq, tasks, defs)
 
     # 헤더
     st.markdown(
@@ -169,10 +145,47 @@ def _status_dialog(equipment_id: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── 점검 일정 ──
+    # ── 점검 결과 이력 (완료 점검, 최신순 — task_id 정밀 매칭) ──
     st.markdown(
         f"<div style='font-weight:700; color:#0F172A; font-size:1rem; "
-        f"margin:0.7rem 0 0.3rem;'>점검 일정 ({len(matching_tasks)}건)</div>",
+        f"margin:0.7rem 0 0.3rem;'>📋 점검 결과 이력 ({len(history)}건)</div>",
+        unsafe_allow_html=True,
+    )
+    if history:
+        hb = ""
+        for (dt, types_str, is_good, detail, d) in history:
+            rb = (
+                "<span style='color:#16A34A; font-weight:600;'>양호</span>"
+                if is_good else
+                "<span style='color:#DC2626; font-weight:600;'>지적</span>"
+            )
+            content = "-" if is_good else detail
+            hb += (
+                "<tr style='border-bottom:1px solid #F1F5F9;'>"
+                f"<td style='padding:0.5rem 0.3rem; color:#334155;'>{fmt_date(dt)}</td>"
+                f"<td style='padding:0.5rem 0.3rem; color:#0F172A;'>{types_str}</td>"
+                f"<td style='padding:0.5rem 0.3rem;'>{rb}</td>"
+                f"<td style='padding:0.5rem 0.3rem; color:#0F172A;'>{content}</td>"
+                "</tr>"
+            )
+        hh = (
+            "<table style='width:100%; border-collapse:collapse;'>"
+            "<thead><tr style='color:#64748B; font-size:0.78rem; text-align:left; "
+            "border-bottom:1px solid #E2E8F0;'>"
+            "<th style='padding:0.4rem 0.3rem;'>일자</th>"
+            "<th style='padding:0.4rem 0.3rem;'>점검 유형</th>"
+            "<th style='padding:0.4rem 0.3rem;'>결과</th>"
+            "<th style='padding:0.4rem 0.3rem;'>지적 내용</th>"
+            "</tr></thead><tbody>"
+        )
+        st.markdown(hh + hb + "</tbody></table>", unsafe_allow_html=True)
+    else:
+        st.info("완료된 점검 이력이 없습니다. (점검 시작 → 결과 입력 시 누적됩니다)")
+
+    # ── 점검 일정 (예정·진행 포함 전체) ──
+    st.markdown(
+        f"<div style='font-weight:700; color:#0F172A; font-size:1rem; "
+        f"margin:1rem 0 0.3rem;'>🗓️ 점검 일정 ({len(matching_tasks)}건)</div>",
         unsafe_allow_html=True,
     )
     if matching_tasks:
@@ -202,25 +215,22 @@ def _status_dialog(equipment_id: str) -> None:
     else:
         st.info("이 장비에 매핑된 점검 일정이 없습니다.")
 
-    # ── 지적사항 / 통보서 ──
+    # ── 구역 통보서 (층/구역 단위 — 장비 직접 FK 없어 위치 기준) ──
     st.markdown(
         f"<div style='font-weight:700; color:#0F172A; font-size:1rem; "
-        f"margin:1rem 0 0.3rem;'>지적사항 / 통보서 ({len(matching_defs) + len(matching_notices)}건)</div>",
+        f"margin:1rem 0 0.3rem;'>📨 구역 통보서 ({len(matching_notices)}건)</div>",
         unsafe_allow_html=True,
     )
-    if matching_defs or matching_notices:
+    if matching_notices:
         rows = []
-        for d in matching_defs:
-            rows.append(("지적", d.inspection_date, d.issue, d.resolution, d.notice_no or "-"))
         for n in matching_notices:
             status_text = "조치 완료" if n.action_done else "조치 대기"
-            rows.append(("통보서", n.inspection_date, n.issue, status_text, n.notice_no))
-        rows.sort(key=lambda r: r[1] or data.TODAY, reverse=True)
+            rows.append((n.inspection_date, n.issue, status_text, n.notice_no))
+        rows.sort(key=lambda r: r[0] or data.TODAY, reverse=True)
         header = (
             "<table style='width:100%; border-collapse:collapse;'>"
             "<thead><tr style='color:#64748B; font-size:0.78rem; text-align:left; "
             "border-bottom:1px solid #E2E8F0;'>"
-            "<th style='padding:0.4rem 0.3rem;'>구분</th>"
             "<th style='padding:0.4rem 0.3rem;'>일자</th>"
             "<th style='padding:0.4rem 0.3rem;'>내용</th>"
             "<th style='padding:0.4rem 0.3rem;'>상태</th>"
@@ -229,17 +239,16 @@ def _status_dialog(equipment_id: str) -> None:
         )
         body = "".join(
             "<tr style='border-bottom:1px solid #F1F5F9;'>"
-            f"<td style='padding:0.5rem 0.3rem; color:#334155;'>{kind}</td>"
             f"<td style='padding:0.5rem 0.3rem; color:#334155;'>{fmt_date(dt)}</td>"
             f"<td style='padding:0.5rem 0.3rem; color:#0F172A;'>{issue}</td>"
             f"<td style='padding:0.5rem 0.3rem;'>{badge(status)}</td>"
             f"<td style='padding:0.5rem 0.3rem; color:#475569; font-size:0.8rem;'>{notice_no}</td>"
             "</tr>"
-            for (kind, dt, issue, status, notice_no) in rows
+            for (dt, issue, status, notice_no) in rows
         )
         st.markdown(header + body + "</tbody></table>", unsafe_allow_html=True)
     else:
-        st.info("이 장비/구역에서 발급된 지적사항·통보서가 없습니다.")
+        st.info("이 구역에서 발급된 통보서가 없습니다.")
 
     st.markdown("<div style='height:0.8rem;'></div>", unsafe_allow_html=True)
     st.markdown(
@@ -541,9 +550,9 @@ def render() -> None:
     # ---------- 테이블 (st.columns 기반) ----------
     st.markdown(_table_header_html(), unsafe_allow_html=True)
 
-    # 작업 상태 계산용 전체 task/notice 한 번만 로드
+    # 점검 이력 계산용 전체 task/deficiency 한 번만 로드
     all_tasks = data.load_tasks()
-    all_notices = data.load_notices()
+    all_defs = data.load_deficiencies()
 
     # 클릭 처리는 루프 후 마지막 한 번만 (dialog는 한 번에 하나)
     open_status_for: str | None = None
@@ -551,8 +560,17 @@ def render() -> None:
     for e in rows:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         with cols[0]:
+            # 도면 위치(spot) 등록 여부 배지
+            registered = bool(e.spot_id)
+            loc_badge = (
+                "<span style='color:#16A34A; font-size:0.72rem;'>📍 등록</span>"
+                if registered else
+                "<span style='color:#D97706; font-size:0.72rem; "
+                "font-weight:600;'>⚠️ 미등록</span>"
+            )
             st.markdown(
-                f"<span style='font-weight:600; color:#0F172A;'>{e.location_id}</span>",
+                f"<span style='font-weight:600; color:#0F172A;'>{e.location_id}</span>"
+                f"<div style='margin-top:0.1rem;'>{loc_badge}</div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
@@ -564,20 +582,21 @@ def render() -> None:
         with cols[2]:
             st.markdown(badge(e.qr_status), unsafe_allow_html=True)
         with cols[3]:
+            # 최근 점검일 + 건강상태(점검 결과) 병합
+            date_txt = fmt_date(e.last_inspection) if e.last_inspection else "미점검"
             st.markdown(
-                f"<span style='color:#334155;'>{fmt_date(e.last_inspection)}</span>",
+                f"<div style='color:#334155;'>{date_txt}</div>"
+                f"<div style='margin-top:0.15rem;'>{badge(e.health_status)}</div>",
                 unsafe_allow_html=True,
             )
         with cols[4]:
-            st.markdown(badge(e.health_status), unsafe_allow_html=True)
-        with cols[5]:
-            color, label = _work_chip(e, all_tasks, all_notices)
-            # 칩 클릭 = 점검 현황 팝업. 버튼 라벨로 칩 디자인 흉내내기 위해 secondary 버튼 + CSS는 어려우므로
-            # 시각적 칩 표시 + 별도 버튼 두 줄. 한 줄에 모두 담기 위해 버튼 라벨 자체에 라벨 사용.
-            if st.button(label, key=f"status_btn_{e.equipment_id}",
+            # 점검 이력 — 완료 점검 횟수 표시 + 클릭 시 이력 팝업
+            hist = _equipment_history(e, all_tasks, all_defs)
+            hist_label = f"이력 {len(hist)}회" if hist else "이력 —"
+            if st.button(hist_label, key=f"hist_btn_{e.equipment_id}",
                          use_container_width=True):
                 open_status_for = e.equipment_id
-        with cols[6]:
+        with cols[5]:
             if st.button("속성", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
                 _qr_dialog(e.equipment_id)
 
