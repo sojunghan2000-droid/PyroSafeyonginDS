@@ -338,7 +338,7 @@ def render() -> None:
     title_col, action_col = st.columns([2.5, 1.5])
     with title_col:
         page_header(
-            "안전점검",
+            "안전점검 관리",
             "안전점검 회차(Round) 단위로 점검을 진행합니다. 회차 [상세]에서 [점검 시작]으로 별지5 결과를 기록하세요.",
         )
     new_task_clicked = False
