@@ -30,8 +30,10 @@ EQ_CATEGORIES = [
     "확산소화기", "유도등", "스프링클러", "소화전", "기타",
 ]
 
-# 등록 가능한 층
+# 등록 가능한 층 (구 명칭 — 일부 로직 호환용)
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
+# 실제 도면 PNG(assets/floors)가 있는 8개 층 — 신규 위치 생성 좌표 픽업용
+SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
 
 
 INSPECTION_TYPES = [
@@ -1514,6 +1516,96 @@ def malfunction_action_dialog(malfunction_id: str) -> None:
         st.rerun()
 
 
+def _eq_new_spot_map(floor: str):
+    """신규 장비 등록 '신규 위치 만들기' — 도면 클릭 좌표 픽업.
+    빈 곳(격자) 클릭 시 (x_pct, y_pct) 반환, 아니면 None.
+    기존 spot은 노란 점(참고), 현재 선택 좌표는 파란 별로 표시."""
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import control_toggle, plotly_config, lock_overlay_css
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.caption(f"({floor} 도면 이미지가 없어 아래 좌표를 직접 입력하세요)")
+        return None
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    # 기존 spot (참고용, 노란 점)
+    fspots = data.load_spots(floor)
+    if fspots:
+        fig.add_trace(go.Scatter(
+            x=[s.x_pct / 100 * FIG_W for s in fspots],
+            y=[FIG_H - s.y_pct / 100 * FIG_H for s in fspots],
+            mode="markers",
+            marker=dict(size=12, color="#F59E0B", line=dict(color="#FFFFFF", width=1.5)),
+            customdata=[("spot",)] * len(fspots),
+            hovertemplate="기존 위치<extra></extra>", showlegend=False, name="기존",
+        ))
+
+    # 현재 선택 좌표 (파란 별)
+    cx = float(st.session_state.get("eq_dlg_new_x", 50.0))
+    cy = float(st.session_state.get("eq_dlg_new_y", 50.0))
+    fig.add_trace(go.Scatter(
+        x=[cx / 100 * FIG_W], y=[FIG_H - cy / 100 * FIG_H],
+        mode="markers",
+        marker=dict(size=20, color="#2563EB", symbol="star",
+                    line=dict(color="#FFFFFF", width=2)),
+        customdata=[("cur",)],
+        hovertemplate="현재 선택 위치<extra></extra>", showlegend=False, name="현재",
+    ))
+
+    # 클릭 격자
+    gx, gy = [], []
+    for i in range(50):
+        for j in range(50):
+            gx.append((i + 0.5) / 50 * FIG_W)
+            gy.append((j + 0.5) / 50 * FIG_H)
+    fig.add_trace(go.Scatter(
+        x=gx, y=gy, mode="markers",
+        marker=dict(size=10, color="rgba(59,130,246,0.22)", line=dict(width=0)),
+        customdata=[("grid",)] * len(gx),
+        hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
+        showlegend=False, name="grid",
+    ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#F8FAFC", height=420,
+        dragmode="pan", showlegend=False, clickmode="event+select",
+        uirevision=f"eq_new_{floor}",
+    )
+
+    # 좌표 픽업이 주목적이라 기본 잠금 해제 (바로 클릭 가능)
+    locked = control_toggle("eq_new_spot_map", default_locked=False)
+    if locked:
+        lock_overlay_css()
+    event = st.plotly_chart(
+        fig, use_container_width=True, config=plotly_config(),
+        on_select="rerun", selection_mode=["points"],
+        key=f"eq_new_map_{floor}",
+    )
+    if (not locked and event and getattr(event, "selection", None)
+            and getattr(event.selection, "points", None)):
+        pt = event.selection.points[-1]
+        cd = pt.get("customdata")
+        if cd and cd[0] == "grid":
+            x_pct = round(pt["x"] / FIG_W * 100, 2)
+            y_pct = round((FIG_H - pt["y"]) / FIG_H * 100, 2)
+            return (x_pct, y_pct)
+    return None
+
+
 @st.dialog("신규 장비 등록", width="large")
 def equipment_dialog() -> None:
     """시설 마스터에 신규 장비를 등록. 위치는 spot 객체에서 선택 (관리자가
@@ -1589,30 +1681,43 @@ def equipment_dialog() -> None:
                     unsafe_allow_html=True,
                 )
     else:
-        # 신규 위치 즉석 생성 — 장비 등록과 동시에 spot 정식 생성
+        # 신규 위치 즉석 생성 — 도면 클릭으로 좌표 픽업 + 등록과 동시에 spot 정식 생성
         nc1, nc2 = st.columns([1, 2])
         with nc1:
-            new_floor = st.selectbox("층", options=list(EQ_FLOORS), key="eq_dlg_new_floor")
+            new_floor = st.selectbox("층", options=SPOT_FLOORS, key="eq_dlg_new_floor")
         with nc2:
             new_room = st.text_input(
                 "위치 설명(방이름)",
                 key="eq_dlg_new_room",
                 placeholder="예: B2 기계실 입구",
             )
+
+        # 좌표 세션 기본값 (widget 생성 전 초기화 — 도면 클릭 결과가 여기 반영됨)
+        if "eq_dlg_new_x" not in st.session_state:
+            st.session_state["eq_dlg_new_x"] = 50.0
+        if "eq_dlg_new_y" not in st.session_state:
+            st.session_state["eq_dlg_new_y"] = 50.0
+
+        # 도면 클릭 좌표 픽업 — number_input 생성 전에 처리해야 세션값 반영됨
+        picked = _eq_new_spot_map(new_floor)
+        if picked is not None:
+            st.session_state["eq_dlg_new_x"] = picked[0]
+            st.session_state["eq_dlg_new_y"] = picked[1]
+
         xc, yc = st.columns(2)
         with xc:
             new_x = st.number_input(
                 "x_pct (도면 폭 %)", min_value=0.0, max_value=100.0,
-                value=50.0, step=0.5, format="%.1f", key="eq_dlg_new_x",
+                step=0.5, format="%.1f", key="eq_dlg_new_x",
             )
         with yc:
             new_y = st.number_input(
                 "y_pct (도면 높이 %)", min_value=0.0, max_value=100.0,
-                value=50.0, step=0.5, format="%.1f", key="eq_dlg_new_y",
+                step=0.5, format="%.1f", key="eq_dlg_new_y",
             )
         st.caption(
-            "💡 정밀 위치는 등록 후 ⚙️ 관리자 메뉴 → 위치 마스터 → [속성 변경]에서 "
-            "도면 클릭으로 조정할 수 있습니다."
+            "💡 도면 잠금을 풀고 빈 곳을 클릭하면 좌표가 자동 픽업됩니다 "
+            "(파란 별 = 현재 선택). 미세조정은 위 숫자입력."
         )
         if new_room.strip():
             new_spot_meta = (new_floor, new_room.strip(), new_x, new_y)
