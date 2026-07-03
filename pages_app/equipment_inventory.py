@@ -6,7 +6,7 @@ import streamlit as st
 
 from lib import auth, data
 from lib.data import TASK_INSPECTION_TYPES
-from lib.inspection_dialog import EQ_FLOORS, equipment_dialog
+from lib.inspection_dialog import EQ_FLOORS, SPOT_FLOORS, equipment_dialog
 from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
@@ -535,8 +535,10 @@ def render() -> None:
             "<b>[이 층 보기]</b>로 상세 이동</div>",
             unsafe_allow_html=True,
         )
-        eq_floors = sorted({e.floor for e in eq})
-        n_cols = 3
+        # 관리자(위치 마스터) 화면처럼 전 층을 건물 순서로 2행 4열 그리드
+        extra = [f for f in sorted({e.floor for e in eq}) if f not in SPOT_FLOORS]
+        eq_floors = SPOT_FLOORS + extra
+        n_cols = 4
         for row_start in range(0, len(eq_floors), n_cols):
             row_floors = eq_floors[row_start:row_start + n_cols]
             grid_cols = st.columns(n_cols)
