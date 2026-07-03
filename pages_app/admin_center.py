@@ -273,6 +273,57 @@ def _spot_edit_dialog(spot_id: str) -> None:
             st.rerun()
 
 
+@st.dialog("정식 spot 전환 승인")
+def _spot_approve_dialog(spot_id: str) -> None:
+    """검증 대기(임시) spot을 현장 입력값 그대로 정식 전환하는 승인 확인 모달."""
+    s = next((x for x in data.load_spots() if x.spot_id == spot_id), None)
+    if not s:
+        st.error("spot을 찾을 수 없습니다.")
+        st.session_state.pop("admin_spot_approve_id", None)
+        return
+    loc_id = data.location_id_from_spot(s.spot_id)
+    if not s.is_temporary:
+        st.info(f"{loc_id}는 이미 정식 spot입니다.")
+        if st.button("닫기", use_container_width=True, key=f"approve_close_{spot_id}"):
+            st.session_state.pop("admin_spot_approve_id", None)
+            st.rerun()
+        return
+
+    st.markdown(
+        f"<div style='background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; "
+        f"padding:0.6rem 0.8rem; color:#1E3A8A; line-height:1.9; font-size:0.9rem;'>"
+        f"아래 <b>현장 신규 spot</b>을 <b>정식 전환</b>합니다. 방이름·좌표를 확인하세요.<br>"
+        f"<b>위치 ID</b> · {loc_id} &nbsp;|&nbsp; <b>spot ID</b> · {s.spot_id}<br>"
+        f"<b>층</b> · {s.floor} &nbsp;|&nbsp; <b>방이름</b> · {s.room_name or '(미입력)'}<br>"
+        f"<b>좌표(%)</b> · {s.x_pct:.1f} / {s.y_pct:.1f}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("방이름·좌표를 고쳐야 하면 취소 후 [속성 변경]에서 조정하세요.")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button("승인 확정 (정식 전환)", type="primary",
+                     use_container_width=True, key=f"approve_confirm_{spot_id}"):
+            n = data.update_spot_with_equipment_sync(
+                data.Spot(
+                    spot_id=s.spot_id, floor=s.floor,
+                    room_name=s.room_name, notes=s.notes,
+                    x_pct=s.x_pct, y_pct=s.y_pct,
+                    is_temporary=False,
+                )
+            )
+            msg = f"{loc_id} ({s.spot_id}) 정식 전환 완료."
+            if n:
+                msg += f" 매핑 장비 {n}건 위치 동기화."
+            st.session_state["admin_spot_save_msg"] = msg
+            st.session_state.pop("admin_spot_approve_id", None)
+            st.rerun()
+    with c2:
+        if st.button("취소", use_container_width=True, key=f"approve_cancel_{spot_id}"):
+            st.session_state.pop("admin_spot_approve_id", None)
+            st.rerun()
+
+
 def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | None:
     """spot 편집 모달용 도면 — 현재 spot은 파란색(현재 좌표 또는 클릭 좌표),
     다른 spot은 옅은 주황. 좌표 픽업 그리드 + 클릭 가능 빈 영역."""
@@ -604,10 +655,10 @@ def _spot_master_tab() -> None:
 
     used = {e.spot_id for e in data.load_equipment() if e.spot_id}
     # 컬럼 8개: 위치 ID / spot ID / 방이름 / 비고 / 좌표 / 사용 / [속성변경] / [삭제]
-    cols_ratio = [0.9, 1.25, 1.6, 1.2, 0.85, 0.7, 0.95, 0.7]
+    cols_ratio = [0.85, 1.15, 1.5, 1.1, 0.8, 0.65, 0.85, 0.9, 0.65]
     header = st.columns(cols_ratio)
     for col, txt in zip(header,
-                        ["위치 ID", "spot ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
+                        ["위치 ID", "spot ID", "방이름", "비고", "좌표(%)", "사용", "승인", "", ""]):
         col.markdown(
             f"<div style='color:#64748B; font-size:0.78rem; font-weight:600;'>{txt}</div>",
             unsafe_allow_html=True,
@@ -658,11 +709,18 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
         with row[6]:
+            # 검증 대기(임시) spot에만 [승인] 노출 → 확인 후 정식 전환
+            if s.is_temporary:
+                if st.button("승인", key=f"admin_spot_approve_{s.spot_id}",
+                             type="primary", use_container_width=True):
+                    st.session_state["admin_spot_approve_id"] = s.spot_id
+                    st.rerun()
+        with row[7]:
             if st.button("속성 변경", key=f"admin_spot_edit_{s.spot_id}",
                          use_container_width=True):
                 st.session_state["admin_spot_edit_id"] = s.spot_id
                 st.rerun()
-        with row[7]:
+        with row[8]:
             if st.button("삭제", key=f"admin_spot_del_{s.spot_id}",
                          use_container_width=True, disabled=in_use):
                 data.delete_spot(s.spot_id)
@@ -673,10 +731,13 @@ def _spot_master_tab() -> None:
     if msg:
         st.success(msg)
 
-    # 편집 모달 트리거
+    # 편집 / 승인 모달 트리거
     edit_id = st.session_state.get("admin_spot_edit_id")
     if edit_id:
         _spot_edit_dialog(edit_id)
+    approve_id = st.session_state.get("admin_spot_approve_id")
+    if approve_id:
+        _spot_approve_dialog(approve_id)
 
 
 def _user_admin_tab() -> None:
