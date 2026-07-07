@@ -499,14 +499,29 @@ def render() -> None:
 
     # ---------- 별지5 ----------
     _section_title("별지5 · 안전점검 결과 지적내역서",
-                   "현장 점검에서 발견된 모든 지적사항(완료/불가)을 일괄 PDF로 출력합니다.")
+                   "점검이 완료된(결과 입력된) 지적사항을 PDF로 출력합니다. "
+                   "전체 또는 특정 회차를 선택할 수 있습니다.")
     _, mid5, _ = st.columns([1, 2, 1])
     with mid5:
         st.markdown(_card_header("별지5", "안전점검 결과 지적내역서"), unsafe_allow_html=True)
+        # 출력 범위 — 전체 또는 특정 회차만 (round_id 필터). 출력 기준은 점검 완료(Deficiency) 유지
+        _task_round = {t.task_id: t.round_id for t in data.load_tasks() if t.round_id}
+        _cnt: dict[str, int] = {}
+        for _d in data.load_deficiencies():
+            _rid = _task_round.get(_d.task_id)
+            if _rid:
+                _cnt[_rid] = _cnt.get(_rid, 0) + 1
+        _opts = {"전체 (모든 회차)": None}
+        for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+            _opts[f"{_r.round_id} · {_r.task_type} · {_cnt.get(_r.round_id, 0)}건"] = _r.round_id
+        _sel_label = st.selectbox("출력 범위", list(_opts.keys()), key="byeolji5_scope")
+        _sel_round = _opts[_sel_label]
+        _fname = (f"별지 5. 안전점검 결과 지적 내역서 - {_sel_round}.pdf"
+                  if _sel_round else "별지 5. 안전점검 결과 지적 내역서.pdf")
         st.download_button(
             "Download 별지5 PDF",
-            data=_build_pdf_byeolji5(),
-            file_name="별지 5. 안전점검 결과 지적 내역서.pdf",
+            data=_build_pdf_byeolji5(_sel_round),
+            file_name=_fname,
             mime="application/pdf",
             use_container_width=True,
             type="primary",
