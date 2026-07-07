@@ -1,8 +1,10 @@
 """점검 일정 페이지 — v1.4 회차(Round) 단위 표시 + 회차 상세 모달."""
 from __future__ import annotations
 
+import io
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
 from lib import data, auth
@@ -21,6 +23,48 @@ TAB_TO_STATUS = {
 }
 
 ROW_COLS = [1.5, 1.7, 0.9, 1.0, 1.3, 0.9, 0.8]
+
+
+def _audit_log_xlsx() -> bytes:
+    """점검 결과(Deficiency) 감사 로그를 Excel(.xlsx) 바이트로 생성.
+    별지5 원본 데이터를 감사 제출용 평면 표로 정리 (점검일 최신순)."""
+    defs = data.load_deficiencies()
+    task_round = {t.task_id: (t.round_id or "") for t in data.load_tasks()}
+    recs = []
+    for d in sorted(defs, key=lambda x: x.inspection_date or data.TODAY,
+                    reverse=True):
+        is_good = (d.issue or "").strip() in ("", "양호")
+        ng = [k for k, v in (d.checklist_items or {}).items() if v == "NG"]
+        reasons = list(d.defect_codes or [])
+        if d.defect_other:
+            reasons.append(f"기타: {d.defect_other}")
+        recs.append({
+            "점검일": fmt_date(d.inspection_date),
+            "점검 ID": (task_round.get(d.task_id) or "-") if d.task_id else "-",
+            "작업 ID": d.task_id or "-",
+            "층": d.floor,
+            "구역": d.zone,
+            "점검종류": " / ".join(d.inspection_types or []),
+            "결과": "양호" if is_good else "지적",
+            "지적내용": "" if is_good else (d.issue or ""),
+            "불량사유": ", ".join(reasons),
+            "checklist NG": ", ".join(ng),
+            "조치상태": d.resolution or "",
+            "조치완료일": fmt_date(d.action_at) if d.action_at else "",
+            "점검자": d.inspector or "",
+            "확인자": d.confirmer or "",
+            "통보서번호": d.notice_no or "",
+            "기록 ID": d.deficiency_id,
+        })
+    df = pd.DataFrame(recs, columns=[
+        "점검일", "점검 ID", "작업 ID", "층", "구역", "점검종류", "결과",
+        "지적내용", "불량사유", "checklist NG", "조치상태", "조치완료일",
+        "점검자", "확인자", "통보서번호", "기록 ID",
+    ])
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="점검결과 감사로그")
+    return buf.getvalue()
 
 
 def _progress_bar_html(done: int, total: int) -> str:
@@ -354,7 +398,16 @@ def render() -> None:
                          key="open_new_malfunction_insp"):
                 mal_clicked = True
         with b3:
-            st.button("감사 로그 내보내기", use_container_width=True)
+            st.download_button(
+                "감사 로그 내보내기",
+                data=_audit_log_xlsx(),
+                file_name=f"감사로그_점검결과_{data.TODAY:%Y%m%d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet",
+                use_container_width=True,
+                key="audit_log_export",
+                help="점검 결과(별지5 원본) 전체를 Excel(.xlsx)로 내려받습니다.",
+            )
 
     submitted_round = st.session_state.pop("just_submitted_round", None)
     submitted_ids = st.session_state.pop("just_submitted_tasks", None)
