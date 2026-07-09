@@ -786,6 +786,107 @@ def _user_admin_tab() -> None:
                             st.error(f"실패: {e}")
 
 
+_MIGRATION_SQL_INSP_TYPES = (
+    "create table if not exists public.inspection_types (\n"
+    "  name text primary key, is_active boolean not null default true,\n"
+    "  is_builtin boolean not null default false,\n"
+    "  sort_order int not null default 100,\n"
+    "  created_at timestamptz not null default now());\n"
+    "insert into public.inspection_types (name, is_builtin, sort_order) values\n"
+    "  ('일일 점검',true,1),('주간 점검',true,2),('월간 점검',true,3),\n"
+    "  ('분기 점검',true,4),('연간 점검',true,5) on conflict (name) do nothing;\n"
+    "alter table public.inspection_types enable row level security;"
+)
+
+
+def _inspection_type_tab() -> None:
+    """점검 유형(주기) 카탈로그 관리 — 추가/비활성/삭제."""
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.92rem;'>"
+        "점검 유형(주기) 카탈로그를 관리합니다 — <b>추가 / 비활성 / 삭제</b>. "
+        "비활성 유형은 새 선택 목록에서 숨겨지지만, 이미 지정된 장비·회차엔 그대로 남습니다."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not data.inspection_types_table_exists():
+        st.warning(
+            "점검 유형 테이블(`inspection_types`)이 없습니다. 아래 SQL을 "
+            "Supabase SQL 에디터에서 1회 실행한 뒤 새로고침하세요."
+        )
+        st.code(_MIGRATION_SQL_INSP_TYPES, language="sql")
+        return
+
+    # 새 유형 추가
+    ac1, ac2 = st.columns([3, 1])
+    with ac1:
+        new_name = st.text_input(
+            "새 유형", key="new_insp_type", label_visibility="collapsed",
+            placeholder="새 점검 유형 (예: 반기 점검)",
+        )
+    with ac2:
+        if st.button("추가", use_container_width=True, type="primary",
+                     key="add_insp_type_btn"):
+            ok, msg = data.add_inspection_type(new_name)
+            if ok:
+                st.session_state.pop("new_insp_type", None)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    st.markdown("<hr style='margin:0.5rem 0 0.3rem; border:none; "
+                "border-top:1px solid #E2E8F0;'>", unsafe_allow_html=True)
+
+    # 목록 헤더
+    ratios = [2.2, 0.9, 0.8, 1.0, 0.9]
+    hcols = st.columns(ratios, vertical_alignment="center")
+    for c, t in zip(hcols, ["유형", "사용중", "기본", "활성", "삭제"]):
+        c.markdown(
+            f"<div style='color:#64748B; font-weight:600; font-size:0.78rem; "
+            f"text-align:center;'>{t}</div>", unsafe_allow_html=True,
+        )
+    st.markdown("<hr style='margin:0.15rem 0 0.1rem; border:none; "
+                "border-top:1px solid #E2E8F0;'>", unsafe_allow_html=True)
+
+    for row in data.load_inspection_type_rows():
+        name = row["name"]
+        usage = data._inspection_type_usage(name)
+        builtin = bool(row.get("is_builtin"))
+        is_active = bool(row.get("is_active", True))
+        cols = st.columns(ratios, vertical_alignment="center")
+        cols[0].markdown(
+            f"<div style='text-align:center; font-weight:600; color:#0F172A;'>{name}</div>",
+            unsafe_allow_html=True,
+        )
+        cols[1].markdown(
+            f"<div style='text-align:center; color:#475569;'>{usage}건</div>",
+            unsafe_allow_html=True,
+        )
+        cols[2].markdown(
+            "<div style='text-align:center;'>"
+            + ("<span style='color:#2563EB; font-size:0.78rem; font-weight:600;'>기본</span>"
+               if builtin else "<span style='color:#CBD5E1;'>—</span>")
+            + "</div>", unsafe_allow_html=True,
+        )
+        # 활성/비활성 — 버튼 토글 (value= 경고 회피)
+        with cols[3]:
+            if st.button("🟢 활성" if is_active else "⚪ 비활성",
+                         key=f"insp_active_{name}", use_container_width=True):
+                data.set_inspection_type_active(name, not is_active)
+                st.rerun()
+        # 삭제 — 기본·사용중은 불가
+        with cols[4]:
+            deletable = (not builtin) and usage == 0
+            if st.button("삭제", key=f"insp_del_{name}", use_container_width=True,
+                         disabled=not deletable,
+                         help=None if deletable else "기본·사용중 유형은 삭제 불가(비활성만)"):
+                ok, msg = data.delete_inspection_type(name)
+                if ok:
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+
 def render() -> None:
     if not auth.is_admin():
         st.error("관리자 권한이 필요합니다. 사이드바의 일반 메뉴를 이용해 주세요.")
@@ -798,7 +899,7 @@ def render() -> None:
 
     # 사이드바 하위 메뉴에서 어떤 탭을 활성화할지 결정 (admin_tab 세션 키)
     # st.tabs는 외부 활성화가 어려우므로 st.radio 패턴으로 구현
-    tabs = ["위치 마스터", "사용자 관리"]
+    tabs = ["위치 마스터", "점검 유형", "사용자 관리"]
     section = st.radio(
         "관리자 섹션",
         tabs,
@@ -809,5 +910,7 @@ def render() -> None:
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
     if section == "위치 마스터":
         _spot_master_tab()
+    elif section == "점검 유형":
+        _inspection_type_tab()
     else:
         _user_admin_tab()
