@@ -504,13 +504,16 @@ def render() -> None:
     if added_tsk:
         st.success(f"신규 Task {added_tsk} 가 회차에 추가되었습니다.")
 
-    # KPI — 회차 단위 + Task 단위 혼합
-    total_rounds = len(rounds)
-    overdue_rounds = sum(1 for r in rounds if r.status == "Overdue")
-    in_prog_rounds = sum(1 for r in rounds if r.status == "In Progress")
-    completed_rounds = sum(1 for r in rounds if r.status == "Completed")
+    # KPI — 회차 단위 + Task 단위 혼합 (취소 회차 제외)
+    active_rounds = [r for r in rounds if not r.cancelled]
+    cancelled_cnt = len(rounds) - len(active_rounds)
+    total_rounds = len(active_rounds)
+    overdue_rounds = sum(1 for r in active_rounds if r.status == "Overdue")
+    in_prog_rounds = sum(1 for r in active_rounds if r.status == "In Progress")
+    completed_rounds = sum(1 for r in active_rounds if r.status == "Completed")
     render_kpi_row([
-        ("전체 회차", f"{total_rounds}", "활성 점검 일정", "default"),
+        ("전체 회차", f"{total_rounds}",
+         f"활성 점검 일정{f' · 취소 {cancelled_cnt}' if cancelled_cnt else ''}", "default"),
         ("지연", f"{overdue_rounds}", "즉시 조치 필요",
          "alert" if overdue_rounds else "default"),
         ("진행 중", f"{in_prog_rounds}", "현재 활성", "default"),
@@ -523,7 +526,7 @@ def render() -> None:
     with tab_col:
         view = st.radio(
             "tab",
-            ["전체", "진행 중", "예정", "지연", "완료"],
+            ["전체", "진행 중", "예정", "지연", "완료", "취소"],
             horizontal=True,
             label_visibility="collapsed",
             key="tasks_view",
@@ -537,9 +540,14 @@ def render() -> None:
         )
 
     visible = rounds
-    target_status = TAB_TO_STATUS.get(view)
-    if target_status:
-        visible = [r for r in visible if r.status == target_status]
+    if view == "취소":
+        visible = [r for r in visible if r.cancelled]
+    else:
+        target_status = TAB_TO_STATUS.get(view)
+        if target_status:
+            # 특정 상태 탭 — 취소 회차 제외
+            visible = [r for r in visible if not r.cancelled and r.status == target_status]
+        # "전체"는 취소 포함 전부 노출 (취소됨 배지로 구분)
     if type_filter != "전체 유형":
         visible = [r for r in visible if r.task_type == type_filter]
 
@@ -622,12 +630,24 @@ def render() -> None:
             )
         done, total = data.round_progress(r.round_id)
         with cols[4]:
-            st.markdown(_progress_bar_html(done, total), unsafe_allow_html=True)
+            if r.cancelled:
+                st.markdown("<span style='color:#CBD5E1;'>—</span>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(_progress_bar_html(done, total), unsafe_allow_html=True)
         with cols[5]:
-            st.markdown(
-                badge(TASK_STATUS_KO.get(r.status, r.status)),
-                unsafe_allow_html=True,
-            )
+            if r.cancelled:
+                st.markdown(
+                    "<span style='background:#FEE2E2; color:#B91C1C; "
+                    "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
+                    "font-weight:600;'>취소됨</span>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    badge(TASK_STATUS_KO.get(r.status, r.status)),
+                    unsafe_allow_html=True,
+                )
         with cols[6]:
             if st.button("점검", key=f"rnd_open_{r.round_id}",
                          use_container_width=True, type="primary"):
@@ -640,6 +660,6 @@ def render() -> None:
     with foot_l:
         st.markdown(
             f"<div style='color:#64748B; font-size:0.85rem; padding-top:0.6rem;'>"
-            f"{total_rounds}개 회차 중 {len(visible)}개 표시 · 활성 Task {len(active_tasks)}건</div>",
+            f"{len(rounds)}개 회차 중 {len(visible)}개 표시 · 활성 Task {len(active_tasks)}건</div>",
             unsafe_allow_html=True,
         )

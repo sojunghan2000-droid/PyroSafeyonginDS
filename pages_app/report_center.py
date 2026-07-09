@@ -513,6 +513,8 @@ def render() -> None:
                 _cnt[_rid] = _cnt.get(_rid, 0) + 1
         _opts = {"전체 (모든 회차)": None}
         for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+            if getattr(_r, "cancelled", False):
+                continue  # 취소 회차 제외
             _opts[f"{_r.round_id} · {_r.task_type} · {_cnt.get(_r.round_id, 0)}건"] = _r.round_id
         _sel_label = st.selectbox("출력 범위", list(_opts.keys()), key="byeolji5_scope")
         _sel_round = _opts[_sel_label]
@@ -558,6 +560,8 @@ def render() -> None:
                     _cnt6[_rid6] = _cnt6.get(_rid6, 0) + 1
             _opts6 = {f"전체 (모든 회차 · {len(done)}건)": None}
             for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+                if getattr(_r, "cancelled", False):
+                    continue  # 취소 회차 제외
                 if _cnt6.get(_r.round_id, 0) > 0:
                     _opts6[f"{_r.round_id} · {_r.task_type} · {_cnt6[_r.round_id]}건"] = _r.round_id
             _sel_label6 = st.selectbox("출력 범위", list(_opts6.keys()),
