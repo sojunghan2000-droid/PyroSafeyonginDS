@@ -114,11 +114,34 @@ def _round_detail_dialog(round_id: str) -> None:
             unsafe_allow_html=True,
         )
 
+    # 취소 상태 배너
+    if r.cancelled:
+        st.markdown(
+            f"<div style='background:#FEF2F2; border:1px solid #FECACA; "
+            f"border-radius:8px; padding:0.5rem 0.8rem; margin:0.2rem 0 0.6rem;'>"
+            f"<b style='color:#B91C1C;'>취소됨</b>"
+            f"<span style='color:#7F1D1D; font-size:0.85rem;'> · 사유: "
+            f"{r.cancel_reason or '-'}"
+            f"{(' · ' + fmt_date(r.cancelled_at)) if r.cancelled_at else ''}"
+            f"{(' · ' + r.cancelled_by) if r.cancelled_by else ''}</span></div>",
+            unsafe_allow_html=True,
+        )
+
     # 회차 단위 별지5 PDF 다운로드 (지적사항이 1건 이상일 때만 활성)
     round_task_ids = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
     round_defs = [d for d in data.load_deficiencies() if d.task_id in round_task_ids]
-    pdl, pdr = st.columns([3, 1])
-    with pdr:
+    _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
+    with c_cancel:
+        can_cancel = (not r.cancelled) and r.status != "Completed"
+        if can_cancel:
+            if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
+                         use_container_width=True):
+                st.session_state[f"round_cancel_open_{round_id}"] = True
+        else:
+            st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
+                      use_container_width=True, disabled=True,
+                      help="완료·기취소 회차는 취소할 수 없습니다.")
+    with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
             st.download_button(
@@ -137,6 +160,29 @@ def _round_detail_dialog(round_id: str) -> None:
                 key=f"rnd_pdf_disabled_{round_id}",
             )
 
+    # 점검 취소 사유 입력 (인라인 — 모달 안 모달 불가 회피)
+    if st.session_state.get(f"round_cancel_open_{round_id}"):
+        _reason = st.text_area(
+            "취소 사유", key=f"round_cancel_reason_{round_id}",
+            placeholder="예: 일정 중복 생성 / 작업 취소로 점검 불필요",
+        )
+        _cc1, _cc2 = st.columns(2)
+        with _cc1:
+            if st.button("취소 확정", type="primary", use_container_width=True,
+                         key=f"round_cancel_confirm_{round_id}",
+                         disabled=not _reason.strip()):
+                _by = (auth.current_user() or {}).get("name") or "관리자"
+                if data.cancel_round(round_id, _reason, _by):
+                    st.session_state.pop(f"round_cancel_open_{round_id}", None)
+                    st.rerun()
+                else:
+                    st.error("취소할 수 없는 회차입니다 (완료/기취소).")
+        with _cc2:
+            if st.button("닫기", use_container_width=True,
+                         key=f"round_cancel_close_{round_id}"):
+                st.session_state.pop(f"round_cancel_open_{round_id}", None)
+                st.rerun()
+
     # 활성 Task 리스트 헤더 + [+ 추가] 버튼
     hl, hr = st.columns([3, 1])
     with hl:
@@ -148,7 +194,7 @@ def _round_detail_dialog(round_id: str) -> None:
     add_clicked = False
     with hr:
         if st.button("+ Task 추가", key=f"rnd_add_tsk_{round_id}",
-                     use_container_width=True):
+                     use_container_width=True, disabled=r.cancelled):
             add_clicked = True
     if not tasks_active:
         st.info("이 회차에 점검 대상 장비가 없습니다.")
