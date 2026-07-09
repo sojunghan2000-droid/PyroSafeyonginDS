@@ -96,8 +96,8 @@ def _hdr_with_hint(col, label: str, tip_md: str) -> None:
             unsafe_allow_html=True,
         )
         with pc:
-            # 라벨 "​"(폭 0) → 자동 ExpandMore ▾ 만 보임
-            with st.popover("​", use_container_width=False):
+            # 라벨 "?" + st.popover 자동 chevron(▾)은 CSS로 숨김 → 물음표만 보임
+            with st.popover("?", use_container_width=False):
                 st.markdown(tip_md)
 
 
@@ -105,11 +105,19 @@ def _render_table_header() -> None:
     """테이블 헤더 — 라벨 + 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버."""
     st.markdown(
         "<style>"
+        # st.popover 자동 chevron(▾) 아이콘 숨김 — 라벨 "?"만 노출
+        ".st-key-eqhdr [data-testid='stPopoverButton'] svg{display:none!important;}"
+        # "?"를 작은 원형 도움말 배지로
         ".st-key-eqhdr [data-testid='stPopoverButton']{"
-        "background:transparent!important;border:none!important;box-shadow:none!important;"
-        "padding:0 0.1rem!important;min-height:0!important;height:1.15rem!important;"
-        "color:#94A3B8!important;}"
-        ".st-key-eqhdr [data-testid='stPopoverButton']:hover{color:#334155!important;}"
+        "background:#F1F5F9!important;border:1px solid #E2E8F0!important;box-shadow:none!important;"
+        "border-radius:50%!important;width:1.2rem!important;height:1.2rem!important;"
+        "min-height:0!important;padding:0!important;line-height:1!important;"
+        "display:inline-flex!important;align-items:center!important;justify-content:center!important;"
+        "font-size:0.72rem!important;font-weight:700!important;color:#64748B!important;}"
+        ".st-key-eqhdr [data-testid='stPopoverButton'] p{"
+        "margin:0!important;font-size:0.72rem!important;font-weight:700!important;line-height:1!important;}"
+        ".st-key-eqhdr [data-testid='stPopoverButton']:hover{"
+        "background:#E2E8F0!important;color:#334155!important;border-color:#CBD5E1!important;}"
         "</style>",
         unsafe_allow_html=True,
     )
