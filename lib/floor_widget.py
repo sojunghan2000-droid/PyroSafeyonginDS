@@ -54,11 +54,13 @@ def control_toggle(key: str, default_locked: bool = True) -> bool:
     같은 rerun에서 새 값을 반환. session_state에도 자동 저장(widget key 동일).
     """
     state_key = f"floor_lock_btn_{key}"
+    # key= 가 session_state[state_key] 와 자동 바인딩되므로 value= 를 함께 주면
+    # "created with a default value but also had its value set via Session State"
+    # 경고가 뜬다 → 초기값만 세팅하고 value= 는 생략한다.
     if state_key not in st.session_state:
         st.session_state[state_key] = default_locked
     locked = st.toggle(
         "🔒 도면 잠금",
-        value=st.session_state[state_key],
         key=state_key,
         help="ON = 잠금(pan/zoom 비활성·modebar 숨김) / OFF = 조작 가능",
     )

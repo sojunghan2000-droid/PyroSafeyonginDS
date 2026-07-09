@@ -72,7 +72,7 @@ def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
     return fig
 
 
-# 3개 컬럼 헤더 ▾ 팝오버 내용 (뜻 + 조치) — 짧게 유지
+# 4개 컬럼 헤더 ? 팝오버 내용 (뜻 + 조치·등록 방법) — 짧게 유지
 _HINT_LOC_MD = ("**위치 등록** — 도면(spot)에 좌표가 등록됐는지 여부.\n\n"
                 "미등록 → **[속성]** 또는 위치 마스터에서 도면 위치 지정.")
 _HINT_QR_MD = ("**QR 상태** — PENDING(스티커 부착·첫 스캔 전) / "
@@ -81,13 +81,17 @@ _HINT_QR_MD = ("**QR 상태** — PENDING(스티커 부착·첫 스캔 전) / "
 _HINT_INSP_MD = ("**최근 점검** — 마지막 점검일 + 결과(PASS 양호 / FAIL 불량 / "
                  "DUE 점검 도래).\n\n"
                  "FAIL·DUE → 안전점검 관리에서 점검·조치 진행.")
+_HINT_TYPE_MD = ("**점검 유형** — 그 장비에 적용 가능한 점검 종류(월간·분기 등). "
+                 "신규 일정 등록 시 이 목록으로 대상 장비를 자동 필터.\n\n"
+                 "등록·변경 → **[속성]** 열기 → "
+                 "**'이 장비에 적용 가능한 점검 유형'** 에서 선택 후 저장.")
 
 _HDR_LABEL_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
 
 
 def _hdr_with_hint(col, label: str, tip_md: str) -> None:
-    """헤더 컬럼: 라벨(가운데) + 옆에 작은 ▾ 설명 팝오버.
-    [spacer, 라벨, ▾] 균형 배치로 라벨이 컬럼 정중앙에 오게 한다."""
+    """헤더 컬럼: 라벨(가운데) + 옆에 작은 ? 설명 팝오버.
+    [spacer, 라벨, ?] 균형 배치로 라벨이 컬럼 정중앙에 오게 한다."""
     with col:
         sp, lc, pc = st.columns([0.32, 1, 0.32], vertical_alignment="center",
                                 gap="small")
@@ -102,7 +106,7 @@ def _hdr_with_hint(col, label: str, tip_md: str) -> None:
 
 
 def _render_table_header() -> None:
-    """테이블 헤더 — 라벨 + 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버."""
+    """테이블 헤더 — 점검 유형/위치 등록/QR 상태/최근 점검 4개 컬럼에 ? 설명 팝오버."""
     st.markdown(
         "<style>"
         # st.popover 자동 chevron(▾) 아이콘 숨김 — 라벨 "?"만 노출
@@ -127,8 +131,7 @@ def _render_table_header() -> None:
                          unsafe_allow_html=True)
         cols[1].markdown(f"<div style='{_HDR_LABEL_CSS}'>시설 종류</div>",
                          unsafe_allow_html=True)
-        cols[2].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 유형</div>",
-                         unsafe_allow_html=True)
+        _hdr_with_hint(cols[2], "점검 유형", _HINT_TYPE_MD)
         _hdr_with_hint(cols[3], "위치 등록", _HINT_LOC_MD)
         _hdr_with_hint(cols[4], "QR 상태", _HINT_QR_MD)
         _hdr_with_hint(cols[5], "최근 점검", _HINT_INSP_MD)
