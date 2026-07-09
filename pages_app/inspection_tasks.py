@@ -388,6 +388,19 @@ def render() -> None:
     new_task_clicked = False
     mal_clicked = False
     with action_col:
+        # 상단 3버튼 — 높이 통일 + 글자 길면 자동 줄바꿈 (잘림 방지)
+        st.markdown(
+            "<style>"
+            ".st-key-open_new_task button,.st-key-open_new_malfunction_insp button,"
+            ".st-key-audit_log_export button{"
+            "white-space:normal!important;min-height:3.1rem;height:100%;"
+            "line-height:1.2;padding:0.3rem 0.4rem!important;}"
+            ".st-key-open_new_task button p,.st-key-open_new_malfunction_insp button p,"
+            ".st-key-audit_log_export button p{white-space:normal!important;"
+            "word-break:keep-all;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
         b1, b2, b3 = st.columns(3)
         with b1:
             if st.button("신규 일정 등록", type="primary",
