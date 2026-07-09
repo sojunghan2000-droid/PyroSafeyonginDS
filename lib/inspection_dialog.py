@@ -11,7 +11,6 @@ import streamlit as st
 from lib import data
 from lib.data import (
     Deficiency, Equipment, InspectionRound, InspectionTask, Malfunction, Notice,
-    TASK_INSPECTION_TYPES,
     add_deficiency, add_equipment, add_malfunction, add_notice,
     add_round, add_task,
     default_inspection_types_for,
@@ -625,7 +624,8 @@ def add_task_to_round_dialog(round_id: str) -> None:
     }
 
     def _is_match(e):
-        return (r.task_type in TASK_INSPECTION_TYPES
+        # 전체 유형(활성+비활성)으로 검증 — 과거/비활성 유형 회차 매칭 유지
+        return (r.task_type in data.load_inspection_types()
                 and r.task_type in (e.inspection_types or []))
 
     matched = [e for e in all_eq
@@ -1782,9 +1782,17 @@ def equipment_dialog() -> None:
         st.session_state["eq_dlg_types"] = cat_default_types
         st.session_state["eq_dlg_last_cat"] = category
 
+    # 활성 유형 ∪ 사전 설정된 값(카테고리 기본값·현재 선택) — 옵션 누락 방지
+    _active_types = data.load_inspection_types(active_only=True)
+    _seen: set[str] = set()
+    _extra_types = [
+        t for t in (list(cat_default_types)
+                    + list(st.session_state.get("eq_dlg_types", []) or []))
+        if t and t not in _active_types and not (t in _seen or _seen.add(t))
+    ]
     insp_types = st.multiselect(
         "적용 점검 유형 (카테고리 기본값 자동 채움, 수정 가능)",
-        options=TASK_INSPECTION_TYPES,
+        options=_active_types + _extra_types,
         key="eq_dlg_types",
         placeholder="이 장비에 적용 가능한 점검 유형을 선택",
     )
@@ -1887,7 +1895,7 @@ def task_dialog() -> None:
         unsafe_allow_html=True,
     )
 
-    type_options = TASK_INSPECTION_TYPES + ["기타"]
+    type_options = data.load_inspection_types(active_only=True) + ["기타"]
     c1, c2 = st.columns([1, 1])
     with c1:
         type_choice = st.selectbox(

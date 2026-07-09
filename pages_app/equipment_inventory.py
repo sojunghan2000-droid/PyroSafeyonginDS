@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 
 from lib import auth, data
-from lib.data import TASK_INSPECTION_TYPES
 from lib.inspection_dialog import EQ_FLOORS, SPOT_FLOORS, equipment_dialog
 from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
@@ -362,9 +361,14 @@ def _qr_dialog(equipment_id: str) -> None:
     # session_state에 키가 없을 때만 현재 값으로 초기화 (편집 중 유지)
     if types_key not in st.session_state:
         st.session_state[types_key] = list(eq.inspection_types or [])
+    # 활성 유형 ∪ 이 장비의 기존 유형(비활성이어도 기존 선택은 옵션에 포함)
+    _active_types = data.load_inspection_types(active_only=True)
+    _type_opts = _active_types + [
+        t for t in (eq.inspection_types or []) if t not in _active_types
+    ]
     edited_types = st.multiselect(
         "적용 점검 유형",
-        options=TASK_INSPECTION_TYPES,
+        options=_type_opts,
         key=types_key,
         label_visibility="collapsed",
         placeholder="적용 가능한 점검 유형 선택",
