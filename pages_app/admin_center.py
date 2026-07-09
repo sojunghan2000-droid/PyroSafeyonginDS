@@ -567,7 +567,7 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
     with head_r:
-        if st.button("+ 신규 위치 (초기 세팅)", type="secondary",
+        if st.button("+ 신규 위치 등록", type="secondary",
                      use_container_width=True, key="admin_spot_open_dlg"):
             for k in ("admin_spot_room", "admin_spot_notes",
                       "admin_spot_x_input", "admin_spot_y_input"):
