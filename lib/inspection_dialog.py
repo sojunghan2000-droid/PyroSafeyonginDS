@@ -1913,7 +1913,7 @@ def task_dialog() -> None:
     resolved_type = (custom_type.strip() if type_choice == "기타" else type_choice)
 
     # v1.6: 일일 점검(화기작업구간 점검 의도)은 작업 구간을 매번 새로 잡아야 하므로
-    # 자유 등록 모드를 기본 ON으로 자동 활성화. 사용자가 풀어 다시 선택할 수도 있음.
+    # 자유 점검 모드를 기본 ON으로 자동 활성화. 사용자가 풀어 다시 선택할 수도 있음.
     is_daily = (type_choice == "일일 점검")
     if is_daily and not st.session_state.get("_task_dlg_daily_seeded"):
         st.session_state["task_dlg_free_mode"] = True
@@ -1921,64 +1921,58 @@ def task_dialog() -> None:
     elif not is_daily:
         st.session_state.pop("_task_dlg_daily_seeded", None)
 
-    # v1.5: 자유 점검 옵션 — 대상을 미리 선택하지 않고 점검 시작 시 정하는 방식
+    # 점검 유형 → 적용 가능 장비 후보 (자유 점검이어도 목록은 항상 표시, 비활성화만)
+    all_eq = data.load_equipment()
+    if type_choice == "기타":
+        candidates = all_eq  # 기타는 전체에서 자유 선택
+    else:
+        candidates = [
+            e for e in all_eq if resolved_type in (e.inspection_types or [])
+        ]
+    eq_indices = list(range(len(candidates)))
+
+    # 자유 점검 체크박스가 목록 아래에 있으므로 session_state에서 미리 읽어 비활성화 판단
+    free_mode = st.session_state.get("task_dlg_free_mode", False)
+
+    # v1.7: 점검 유형이 바뀌면 대상 장비를 '전체 선택'으로 기본 세팅 (불필요한 것만 빼는 방식)
+    last_type = st.session_state.get("task_dlg_last_type")
+    if last_type != type_choice:
+        st.session_state["task_dlg_eq_idxs"] = list(eq_indices)
+        st.session_state["task_dlg_last_type"] = type_choice
+
+    # '모두 선택' 버튼은 기본이 전체 선택이라 제거. '전체 해제'만 유지 (rerun 방지로 state만)
+    _clr_col, _ = st.columns([1, 2.2])
+    with _clr_col:
+        if st.button("전체 해제", key="task_dlg_clear_all",
+                     use_container_width=True, disabled=free_mode):
+            st.session_state["task_dlg_eq_idxs"] = []
+
+    sel_idxs = st.multiselect(
+        f"대상 장비 (이 유형 해당 {len(candidates)}건 후보)",
+        options=eq_indices,
+        format_func=lambda i: (
+            f"{candidates[i].location_id} · {candidates[i].equipment_name}"
+        ),
+        key="task_dlg_eq_idxs",
+        placeholder="장비를 선택하세요 (여러 건 선택 가능)",
+        disabled=free_mode,
+    )
+
+    # v1.5 자유 점검 옵션 — v1.7: 대상 장비 목록 바로 아래에 배치, 체크 시 목록 비활성화
     free_mode = st.checkbox(
-        "대상 미선택 (자유 점검) — 회차만 만들고 점검 시작 시 장비를 선택",
+        "자유 점검 (점검 대상 미선택)",
         key="task_dlg_free_mode",
         help=(
             "체크 시 회차 1건만 만들고 Task는 0개입니다. "
             "점검자가 안전점검 → [신규 Task 추가] 로 그때그때 등록 가능. "
-            "일일 점검(화기작업구간) 선택 시 자동 활성화 — 작업 구간은 매번 자유 입력."
+            "일일 점검(화기작업구간) 선택 시 자동 활성화."
         ),
     )
 
     if free_mode:
-        candidates = []
         selected_eqs = []
-        st.markdown(
-            "<div style='color:#94A3B8; font-size:0.82rem;'>"
-            "회차만 등록되고 대상 장비는 빈 상태로 시작합니다.</div>",
-            unsafe_allow_html=True,
-        )
+        st.caption("자유 점검 — 회차만 등록되고 대상 장비는 점검 시작 시 선택합니다.")
     else:
-        # 점검 유형 → 적용 가능 장비 후보 필터
-        all_eq = data.load_equipment()
-        if type_choice == "기타":
-            candidates = all_eq  # 기타는 전체에서 자유 선택
-        else:
-            candidates = [
-                e for e in all_eq if resolved_type in (e.inspection_types or [])
-            ]
-
-        eq_indices = list(range(len(candidates)))
-
-        # 점검 유형이 바뀌면 multiselect 선택 초기화
-        last_type = st.session_state.get("task_dlg_last_type")
-        if last_type != type_choice:
-            st.session_state["task_dlg_eq_idxs"] = []
-            st.session_state["task_dlg_last_type"] = type_choice
-
-        # dialog 안에서는 st.rerun()이 모달을 닫아버리므로 session_state만 세팅
-        sel_col, clr_col = st.columns(2)
-        with sel_col:
-            if st.button("모두 선택", key="task_dlg_select_all",
-                         use_container_width=True,
-                         disabled=not eq_indices):
-                st.session_state["task_dlg_eq_idxs"] = list(eq_indices)
-        with clr_col:
-            if st.button("일괄 해제", key="task_dlg_clear_all",
-                         use_container_width=True):
-                st.session_state["task_dlg_eq_idxs"] = []
-
-        sel_idxs = st.multiselect(
-            f"대상 장비 (이 유형 해당 {len(candidates)}건 후보)",
-            options=eq_indices,
-            format_func=lambda i: (
-                f"{candidates[i].location_id} · {candidates[i].equipment_name}"
-            ),
-            key="task_dlg_eq_idxs",
-            placeholder="장비를 선택하세요 (여러 건 선택 가능)",
-        )
         selected_eqs = [candidates[i] for i in sel_idxs]
 
     # 공유 입력 (담당자·마감일·메모)
