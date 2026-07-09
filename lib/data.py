@@ -854,17 +854,30 @@ def _refresh_round_status(round_id: str) -> None:
     _round_rows.clear()
 
 
+def round_cancel_supported() -> bool:
+    """inspection_rounds.cancelled 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("inspection_rounds").select("cancelled").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 def cancel_round(round_id: str, reason: str, by: str) -> bool:
-    """회차를 취소 처리(사유 기록). 완료·기취소 회차는 거부(False). 성공 시 True."""
+    """회차를 취소 처리(사유 기록). 완료·기취소 회차는 거부(False). 성공 시 True.
+    취소 컬럼 미마이그레이션 등 DB 오류 시에도 False."""
     r = get_round(round_id)
     if not r or r.cancelled or r.status == "Completed":
         return False
-    _db().table("inspection_rounds").update({
-        "cancelled": True,
-        "cancel_reason": (reason or "").strip(),
-        "cancelled_at": _iso(TODAY),
-        "cancelled_by": by or "",
-    }).eq("round_id", round_id).execute()
+    try:
+        _db().table("inspection_rounds").update({
+            "cancelled": True,
+            "cancel_reason": (reason or "").strip(),
+            "cancelled_at": _iso(TODAY),
+            "cancelled_by": by or "",
+        }).eq("round_id", round_id).execute()
+    except Exception:
+        return False
     _round_rows.clear()
     return True
 

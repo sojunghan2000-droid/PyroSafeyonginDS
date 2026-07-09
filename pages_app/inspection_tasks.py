@@ -132,15 +132,19 @@ def _round_detail_dialog(round_id: str) -> None:
     round_defs = [d for d in data.load_deficiencies() if d.task_id in round_task_ids]
     _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
     with c_cancel:
-        can_cancel = (not r.cancelled) and r.status != "Completed"
+        _cancel_supported = data.round_cancel_supported()
+        can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
         if can_cancel:
             if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
                          use_container_width=True):
                 st.session_state[f"round_cancel_open_{round_id}"] = True
         else:
+            _cancel_help = (
+                "회차 취소 컬럼 마이그레이션이 필요합니다." if not _cancel_supported
+                else "완료·기취소 회차는 취소할 수 없습니다."
+            )
             st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
-                      use_container_width=True, disabled=True,
-                      help="완료·기취소 회차는 취소할 수 없습니다.")
+                      use_container_width=True, disabled=True, help=_cancel_help)
     with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
