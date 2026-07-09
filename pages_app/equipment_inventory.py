@@ -11,8 +11,9 @@ from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 테이블 컬럼 비율 — v1.7: 7컬럼. 위치 등록/QR/최근 점검은 헤더에 ▾ 팝오버가 붙어 폭 여유 확보
-COL_RATIOS = [1.0, 1.5, 1.0, 1.0, 1.3, 0.9, 0.8]
+# 테이블 컬럼 비율 — v1.8: 8컬럼(점검 유형 추가). 위치 등록/QR/최근 점검은 헤더에 ▾ 팝오버가 붙어 폭 여유 확보
+# [장비 ID, 시설 종류, 점검 유형, 위치 등록, QR 상태, 최근 점검, 점검 이력, 작업]
+COL_RATIOS = [0.9, 1.4, 1.3, 0.95, 0.95, 1.2, 0.85, 0.75]
 
 # 장비 건강상태 마커 색 (양호/불량/점검도래)
 _EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
@@ -118,12 +119,14 @@ def _render_table_header() -> None:
                          unsafe_allow_html=True)
         cols[1].markdown(f"<div style='{_HDR_LABEL_CSS}'>시설 종류</div>",
                          unsafe_allow_html=True)
-        _hdr_with_hint(cols[2], "위치 등록", _HINT_LOC_MD)
-        _hdr_with_hint(cols[3], "QR 상태", _HINT_QR_MD)
-        _hdr_with_hint(cols[4], "최근 점검", _HINT_INSP_MD)
-        cols[5].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 이력</div>",
+        cols[2].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 유형</div>",
                          unsafe_allow_html=True)
-        cols[6].markdown(f"<div style='{_HDR_LABEL_CSS}'>작업</div>",
+        _hdr_with_hint(cols[3], "위치 등록", _HINT_LOC_MD)
+        _hdr_with_hint(cols[4], "QR 상태", _HINT_QR_MD)
+        _hdr_with_hint(cols[5], "최근 점검", _HINT_INSP_MD)
+        cols[6].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 이력</div>",
+                         unsafe_allow_html=True)
+        cols[7].markdown(f"<div style='{_HDR_LABEL_CSS}'>작업</div>",
                          unsafe_allow_html=True)
     st.markdown(
         "<hr style='margin:0.15rem 0 0.1rem; border:none; "
@@ -612,6 +615,14 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
         with cols[2]:
+            # 적용 가능한 점검 유형 — 텍스트만, '/' 구분, 미등록 시 '-'
+            types_txt = " / ".join(e.inspection_types) if e.inspection_types else "-"
+            st.markdown(
+                f"<div style='color:#334155; font-size:0.82rem; "
+                f"text-align:center; word-break:keep-all;'>{types_txt}</div>",
+                unsafe_allow_html=True,
+            )
+        with cols[3]:
             # 도면 위치(spot) 등록 여부 — 별도 컬럼, 이모지 없이 텍스트
             registered = bool(e.spot_id)
             loc_txt = (
@@ -623,10 +634,10 @@ def render() -> None:
             )
             st.markdown(f"<div style='text-align:center;'>{loc_txt}</div>",
                         unsafe_allow_html=True)
-        with cols[3]:
+        with cols[4]:
             st.markdown(f"<div style='text-align:center;'>{badge(e.qr_status)}</div>",
                         unsafe_allow_html=True)
-        with cols[4]:
+        with cols[5]:
             # 최근 점검일 + 건강상태(점검 결과) 병합 — 가운데 정렬
             date_txt = fmt_date(e.last_inspection) if e.last_inspection else "미점검"
             st.markdown(
@@ -635,14 +646,14 @@ def render() -> None:
                 f"{badge(e.health_status)}</div>",
                 unsafe_allow_html=True,
             )
-        with cols[5]:
+        with cols[6]:
             # 점검 이력 — 완료 점검 횟수 표시 + 클릭 시 이력 팝업
             hist = _equipment_history(e, all_tasks, all_defs)
             hist_label = f"이력 {len(hist)}회" if hist else "이력 —"
             if st.button(hist_label, key=f"hist_btn_{e.equipment_id}",
                          use_container_width=True):
                 open_status_for = e.equipment_id
-        with cols[6]:
+        with cols[7]:
             if st.button("속성", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
                 _qr_dialog(e.equipment_id)
 
