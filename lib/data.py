@@ -510,6 +510,25 @@ def _round_rows() -> list[dict]:
             .order("due_date", desc=True).execute().data)
 
 
+@st.cache_data(ttl=_CACHE_TTL)
+def _inspection_type_rows() -> list[dict]:
+    """점검 유형 카탈로그 조회. 테이블 미존재/오류 시 [] → 하드코딩 폴백 신호."""
+    try:
+        return (_db().table("inspection_types").select("*")
+                .order("sort_order").order("name").execute().data)
+    except Exception:
+        return []
+
+
+def inspection_types_table_exists() -> bool:
+    """관리 UI에서 마이그레이션 안내 분기용."""
+    try:
+        _db().table("inspection_types").select("name").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_equipment() -> list[Equipment]:
     return [_row_to_equipment(r) for r in _equipment_rows()]
 
@@ -547,6 +566,27 @@ def get_spot(spot_id: str) -> Spot | None:
 
 def load_rounds() -> list[InspectionRound]:
     return [_row_to_round(r) for r in _round_rows()]
+
+
+def load_inspection_types(active_only: bool = False) -> list[str]:
+    """점검 유형 이름 목록. 테이블 없으면 하드코딩 TASK_INSPECTION_TYPES 폴백."""
+    rows = _inspection_type_rows()
+    if not rows:
+        return list(TASK_INSPECTION_TYPES)
+    if active_only:
+        rows = [r for r in rows if r.get("is_active", True)]
+    return [r["name"] for r in rows]
+
+
+def load_inspection_type_rows() -> list[dict]:
+    """관리 UI용 유형 행 목록. 테이블 없으면 하드코딩 5종을 기본(builtin)으로 합성."""
+    rows = _inspection_type_rows()
+    if rows:
+        return rows
+    return [
+        {"name": n, "is_active": True, "is_builtin": True, "sort_order": i + 1}
+        for i, n in enumerate(TASK_INSPECTION_TYPES)
+    ]
 
 
 def get_round(round_id: str) -> InspectionRound | None:
@@ -712,6 +752,52 @@ def set_equipment_inspection_types(equipment_id: str, types: list[str]) -> None:
         {"inspection_types": list(types)}
     ).eq("equipment_id", equipment_id).execute()
     _equipment_rows.clear()
+
+
+# ---------- 점검 유형 카탈로그 관리 (v1.8) ----------
+
+def _inspection_type_usage(name: str) -> int:
+    """유형 사용량 = 장비 inspection_types 포함 수 + 회차 task_type 일치 수."""
+    eq_cnt = sum(1 for e in load_equipment() if name in (e.inspection_types or []))
+    rnd_cnt = sum(1 for r in load_rounds() if r.task_type == name)
+    return eq_cnt + rnd_cnt
+
+
+def add_inspection_type(name: str) -> tuple[bool, str]:
+    """새 점검 유형 추가. (성공여부, 메시지)."""
+    name = (name or "").strip()
+    if not name:
+        return False, "이름을 입력하세요."
+    rows = _inspection_type_rows()
+    if name in {r["name"] for r in rows}:
+        return False, "이미 존재하는 유형입니다."
+    max_order = max([r.get("sort_order", 0) for r in rows] or [0])
+    _db().table("inspection_types").insert({
+        "name": name, "is_active": True, "is_builtin": False,
+        "sort_order": max_order + 1,
+    }).execute()
+    _inspection_type_rows.clear()
+    return True, "추가되었습니다."
+
+
+def set_inspection_type_active(name: str, active: bool) -> None:
+    """유형 활성/비활성 전환."""
+    _db().table("inspection_types").update(
+        {"is_active": active}
+    ).eq("name", name).execute()
+    _inspection_type_rows.clear()
+
+
+def delete_inspection_type(name: str) -> tuple[bool, str]:
+    """유형 삭제. 기본·사용중 유형은 거부. (성공여부, 메시지)."""
+    row = next((r for r in _inspection_type_rows() if r["name"] == name), None)
+    if row and row.get("is_builtin"):
+        return False, "기본 유형은 삭제할 수 없습니다."
+    if _inspection_type_usage(name) > 0:
+        return False, "사용 중인 유형은 삭제할 수 없습니다 (비활성만 가능)."
+    _db().table("inspection_types").delete().eq("name", name).execute()
+    _inspection_type_rows.clear()
+    return True, "삭제되었습니다."
 
 
 def record_equipment_inspection(equipment_id: str, inspected_on: date,
