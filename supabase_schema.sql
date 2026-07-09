@@ -112,3 +112,11 @@ alter table public.deficiencies     enable row level security;
 alter table public.notices          enable row level security;
 alter table public.malfunctions     enable row level security;
 alter table public.inspection_types enable row level security;
+
+-- 7) 회차 취소 컬럼 (v1.8) — inspection_rounds 기본 테이블은 별도 관리(앱 생성).
+--    이 프로젝트의 회차 테이블에 취소 플래그/사유를 추가한다.
+alter table public.inspection_rounds
+  add column if not exists cancelled     boolean     not null default false,
+  add column if not exists cancel_reason text,
+  add column if not exists cancelled_at  timestamptz,
+  add column if not exists cancelled_by  text;
