@@ -530,17 +530,17 @@ def render() -> None:
 
     # ---------- 별지6 ----------
     _section_title("별지6 · 안전점검 조치 결과 통보서",
-                   "조치 완료된 통보서를 1건씩 선택해 PDF로 출력합니다. 사진과 조치 내용이 자동 포함됩니다.")
+                   "조치 완료된 통보서를 전체 또는 특정 회차로 묶어 PDF로 출력합니다. "
+                   "사진과 조치 내용이 자동 포함됩니다.")
     _, mid6, _ = st.columns([1, 2, 1])
     with mid6:
         st.markdown(_card_header("별지6", "안전점검 조치 결과 통보서"), unsafe_allow_html=True)
-        # v1.5: 자료원이 Notice → Deficiency.action_*. 통보서가 발급된 (notice_no 있음)
-        # Deficiency 중 조치 완료된 행이 별지6 출력 대상.
+        # v1.5: 자료원이 Notice → Deficiency.action_*. 통보서가 발급된(notice_no) +
+        # 조치 완료(action_done)된 Deficiency가 별지6 출력 대상.
         all_defs = [d for d in data.load_deficiencies() if d.notice_no]
         done = [d for d in all_defs if d.action_done]
         pending = [d for d in all_defs if not d.action_done]
-        notices = all_defs  # 이하 로직 호환용 alias
-        if not notices:
+        if not all_defs:
             st.info("발급된 통보서가 없습니다.")
         elif not done:
             st.warning(
@@ -548,67 +548,49 @@ def render() -> None:
                 "**지적 관리**에서 '조치 폼'을 먼저 작성하세요."
             )
         else:
-            opts = [
-                f"{n.notice_no} · {n.floor}/{n.zone} · {n.issue[:18]}"
-                for n in done
-            ]
-            all_indices = list(range(len(opts)))
-
-            # 모두 선택 / 일괄 해제 버튼
-            sel_col, clr_col = st.columns(2)
-            with sel_col:
-                if st.button("모두 선택", key="notice_select_all",
-                             use_container_width=True):
-                    st.session_state["notice_multiselect"] = all_indices
-                    st.rerun()
-            with clr_col:
-                if st.button("일괄 해제", key="notice_clear_all",
-                             use_container_width=True):
-                    st.session_state["notice_multiselect"] = []
-                    st.rerun()
-
-            # default 인자는 key 사용 시 무시되며 경고가 나므로 생략.
-            # 모두 선택/일괄 해제 버튼이 session_state["notice_multiselect"]를 직접 세팅.
-            sel_idxs = st.multiselect(
-                "통보서 선택 (조치 완료된 항목만, 다중 선택 가능)",
-                options=all_indices,
-                format_func=lambda i: opts[i],
-                key="notice_multiselect",
-                label_visibility="collapsed",
-                placeholder="통보서를 선택하세요 (여러 건 선택 가능)",
-            )
-            sel_notices = [done[i] for i in sel_idxs]
+            # 출력 범위 — 전체 또는 특정 회차 (별지5와 동일 드롭다운 패턴).
+            # 회차 매핑은 task_id → round_id, 카운트는 조치 완료 통보서 기준.
+            _task_round6 = {t.task_id: t.round_id for t in data.load_tasks() if t.round_id}
+            _cnt6: dict[str, int] = {}
+            for _d in done:
+                _rid6 = _task_round6.get(_d.task_id)
+                if _rid6:
+                    _cnt6[_rid6] = _cnt6.get(_rid6, 0) + 1
+            _opts6 = {f"전체 (모든 회차 · {len(done)}건)": None}
+            for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+                if _cnt6.get(_r.round_id, 0) > 0:
+                    _opts6[f"{_r.round_id} · {_r.task_type} · {_cnt6[_r.round_id]}건"] = _r.round_id
+            _sel_label6 = st.selectbox("출력 범위", list(_opts6.keys()),
+                                       key="byeolji6_scope")
+            _sel_round6 = _opts6[_sel_label6]
+            if _sel_round6:
+                _round_tasks6 = {
+                    t.task_id
+                    for t in data.tasks_of_round(_sel_round6, include_excluded=True)
+                }
+                sel_notices = [d for d in done if d.task_id in _round_tasks6]
+            else:
+                sel_notices = done
 
             n_sel = len(sel_notices)
-            if n_sel == 0:
-                st.button(
-                    "통보서를 선택하면 다운로드 가능",
-                    use_container_width=True,
-                    disabled=True,
-                    key="notice_dl_disabled",
-                )
-            elif n_sel == 1:
-                only = sel_notices[0]
-                st.download_button(
-                    f"Download {only.notice_no}",
-                    data=_build_pdf_byeolji6(only),
-                    file_name=f"별지 6. 안전점검 조치 결과 통보서 ({only.notice_no}).pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                    key="notice_dl_single",
-                )
+            _today6 = data.TODAY.isoformat()
+            if _sel_round6:
+                _fname6 = (f"별지 6. 안전점검 조치 결과 통보서 "
+                           f"({_sel_round6}, {n_sel}건).pdf")
             else:
-                today = data.TODAY.isoformat()
-                st.download_button(
-                    f"Download {n_sel}건 합본 PDF",
-                    data=_build_pdf_byeolji6_multi(sel_notices),
-                    file_name=f"별지 6. 안전점검 조치 결과 통보서 (합본 {n_sel}건, {today}).pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                    key="notice_dl_multi",
-                )
+                _fname6 = (f"별지 6. 안전점검 조치 결과 통보서 "
+                           f"(전체 {n_sel}건, {_today6}).pdf")
+            _btn_label6 = (f"Download 별지6 합본 PDF · {n_sel}건" if n_sel > 1
+                           else f"Download 별지6 PDF · {n_sel}건")
+            st.download_button(
+                _btn_label6,
+                data=_build_pdf_byeolji6_multi(sel_notices),
+                file_name=_fname6,
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="notice_dl",
+            )
 
             if pending:
                 st.markdown(
