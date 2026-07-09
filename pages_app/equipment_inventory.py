@@ -71,11 +71,6 @@ def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
     return fig
 
 
-def _set_eq_floor(target: str) -> None:
-    """미니맵 [이 층 보기] 콜백 — 층 필터를 target 층으로 전환."""
-    st.session_state["eq_floor_filter"] = target
-
-
 # 3개 컬럼 헤더 ▾ 팝오버 내용 (뜻 + 조치) — 짧게 유지
 _HINT_LOC_MD = ("**위치 등록** — 도면(spot)에 좌표가 등록됐는지 여부.\n\n"
                 "미등록 → **[속성]** 또는 위치 마스터에서 도면 위치 지정.")
@@ -554,11 +549,11 @@ def render() -> None:
                 key=f"eq_floor_fig_{floor_filter}",
             )
     else:
-        # 전체 층 — 전 층 미니맵 그리드 + [이 층 보기] 드릴인
+        # 전체 층 — 전 층 미니맵 그리드 (층 이동은 상단 '층' 드롭다운으로 통일, v1.7)
         st.markdown(
             "<div style='margin-top:0.3rem; color:#475569; font-size:0.85rem;'>"
             "🗺️ 전 층 도면 · 장비 위치 (🟢 양호 · 🔴 불량 · 🔵 점검도래) — "
-            "<b>[이 층 보기]</b>로 상세 이동</div>",
+            "상단 <b>층</b> 드롭다운에서 특정 층을 고르면 상세로 이동합니다</div>",
             unsafe_allow_html=True,
         )
         # 관리자(위치 마스터) 화면처럼 전 층을 건물 순서로 2행 4열 그리드
@@ -587,11 +582,6 @@ def render() -> None:
                         )
                     else:
                         st.caption("(도면 없음)")
-                    st.button(
-                        "이 층 보기", key=f"eq_drill_{fl}",
-                        use_container_width=True,
-                        on_click=_set_eq_floor, args=(fl,),
-                    )
 
     # ---------- 테이블 (st.columns 기반) ----------
     # 헤더 — 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버 (위젯)
