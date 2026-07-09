@@ -92,9 +92,23 @@ create table if not exists public.malfunctions (
   created_at     timestamptz not null default now()
 );
 
+-- 6) 점검 유형 카탈로그 (v1.8: 관리자 점검 유형 관리 — 추가/비활성/삭제)
+create table if not exists public.inspection_types (
+  name       text primary key,          -- 유형 이름. 장비·회차가 이름으로 참조
+  is_active  boolean not null default true,
+  is_builtin boolean not null default false,
+  sort_order int not null default 100,
+  created_at timestamptz not null default now()
+);
+insert into public.inspection_types (name, is_builtin, sort_order) values
+  ('일일 점검', true, 1), ('주간 점검', true, 2), ('월간 점검', true, 3),
+  ('분기 점검', true, 4), ('연간 점검', true, 5)
+on conflict (name) do nothing;
+
 -- RLS: 활성화만 하고 정책을 만들지 않음 → anon/authenticated 직접 접근 전부 차단
 alter table public.equipment        enable row level security;
 alter table public.inspection_tasks enable row level security;
 alter table public.deficiencies     enable row level security;
 alter table public.notices          enable row level security;
 alter table public.malfunctions     enable row level security;
+alter table public.inspection_types enable row level security;
