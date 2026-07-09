@@ -240,6 +240,10 @@ class InspectionRound:
     due_date: date
     status: TaskStatus
     note: str = ""
+    cancelled: bool = False
+    cancel_reason: str = ""
+    cancelled_at: date | None = None
+    cancelled_by: str = ""
 
 
 @dataclass
@@ -419,6 +423,10 @@ def _row_to_round(r: dict) -> InspectionRound:
         assignee=r.get("assignee") or "",
         due_date=_d(r["due_date"]),
         status=r["status"], note=r.get("note") or "",
+        cancelled=bool(r.get("cancelled", False)),
+        cancel_reason=r.get("cancel_reason") or "",
+        cancelled_at=_d(r.get("cancelled_at")),
+        cancelled_by=r.get("cancelled_by") or "",
     )
 
 
@@ -618,7 +626,11 @@ def compute_round_status(round_id: str) -> str:
     - Overdue Task 1+ → Overdue
     - In Progress Task 1+ → In Progress
     - 그 외 → Scheduled
-    제외된 Task는 분모에서 빠짐. Task가 0건이면 Scheduled 반환."""
+    제외된 Task는 분모에서 빠짐. Task가 0건이면 Scheduled 반환.
+    취소된 회차는 status를 재계산하지 않는다(현재 status 유지)."""
+    _r = get_round(round_id)
+    if _r and _r.cancelled:
+        return _r.status
     tasks = tasks_of_round(round_id)
     if not tasks:
         return "Scheduled"
@@ -831,12 +843,30 @@ def add_round(r: InspectionRound) -> None:
 
 
 def _refresh_round_status(round_id: str) -> None:
-    """회차의 자동 status를 계산해 갱신."""
+    """회차의 자동 status를 계산해 갱신. 취소된 회차는 갱신하지 않는다."""
+    r = get_round(round_id)
+    if r and r.cancelled:
+        return
     new_status = compute_round_status(round_id)
     _db().table("inspection_rounds").update(
         {"status": new_status}
     ).eq("round_id", round_id).execute()
     _round_rows.clear()
+
+
+def cancel_round(round_id: str, reason: str, by: str) -> bool:
+    """회차를 취소 처리(사유 기록). 완료·기취소 회차는 거부(False). 성공 시 True."""
+    r = get_round(round_id)
+    if not r or r.cancelled or r.status == "Completed":
+        return False
+    _db().table("inspection_rounds").update({
+        "cancelled": True,
+        "cancel_reason": (reason or "").strip(),
+        "cancelled_at": _iso(TODAY),
+        "cancelled_by": by or "",
+    }).eq("round_id", round_id).execute()
+    _round_rows.clear()
+    return True
 
 
 def exclude_task(task_id: str, reason: str, by: str) -> None:
