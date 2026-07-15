@@ -619,7 +619,7 @@ def render() -> None:
                 if is_focused else ""
             )
             st.markdown(
-                f"<div style='text-align:center;'>"
+                f"<div style='text-align:left;'>"
                 f"<span style='color:#0F172A; font-weight:600; font-size:0.88rem; "
                 f"{focus_style}'>{r.round_id}</span>{badges}</div>",
                 unsafe_allow_html=True,
