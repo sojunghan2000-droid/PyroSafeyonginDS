@@ -131,7 +131,7 @@ def _round_detail_dialog(round_id: str) -> None:
     # 회차 단위 별지5 PDF + 취소/숨김/복구 액션
     round_task_ids = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
     round_defs = [d for d in data.load_deficiencies() if d.task_id in round_task_ids]
-    _sp, c_cancel, c_hide, c_pdf = st.columns([1.2, 1, 1, 1])
+    _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
     with c_cancel:
         _cancel_supported = data.round_cancel_supported()
         can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
@@ -146,20 +146,6 @@ def _round_detail_dialog(round_id: str) -> None:
             )
             st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
                       use_container_width=True, disabled=True, help=_cancel_help)
-    with c_hide:
-        if r.archived:
-            if st.button("복구", key=f"round_restore_{round_id}",
-                         use_container_width=True):
-                if data.restore_round(round_id):
-                    st.rerun()
-        elif r.cancelled:
-            if st.button("숨김", key=f"round_hide_{round_id}", use_container_width=True,
-                         help="기록은 보존되고 목록에서만 숨겨집니다 (복구 가능)"):
-                if data.archive_round(round_id):
-                    st.rerun()
-        else:
-            st.button("숨김", key=f"round_hide_dis_{round_id}", use_container_width=True,
-                      disabled=True, help="취소된 회차만 숨길 수 있습니다.")
     with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
@@ -590,7 +576,7 @@ def render() -> None:
         "<div style='display:grid; "
         f"grid-template-columns: {' '.join(f'{r}fr' for r in ROW_COLS)}; "
         "gap:0.4rem; padding:0.55rem 0.4rem; "
-        "color:#64748B; font-size:0.78rem; font-weight:600; "
+        "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center; "
         "border-bottom:1px solid #E2E8F0;'>"
         "<div>점검 ID</div>"
         "<div>점검 유형</div>"
@@ -633,13 +619,14 @@ def render() -> None:
                 if is_focused else ""
             )
             st.markdown(
+                f"<div style='text-align:center;'>"
                 f"<span style='color:#0F172A; font-weight:600; font-size:0.88rem; "
-                f"{focus_style}'>{r.round_id}</span>{badges}",
+                f"{focus_style}'>{r.round_id}</span>{badges}</div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
             st.markdown(
-                f"<span style='color:#0F172A;'>{r.task_type}</span>",
+                f"<div style='text-align:center; color:#0F172A;'>{r.task_type}</div>",
                 unsafe_allow_html=True,
             )
         with cols[2]:
@@ -648,7 +635,7 @@ def render() -> None:
                               if r.assignee in ("", "Unassigned", "미지정")
                               else "color:#334155;")
             st.markdown(
-                f"<span style='{assignee_style}'>{assignee_label}</span>",
+                f"<div style='text-align:center; {assignee_style}'>{assignee_label}</div>",
                 unsafe_allow_html=True,
             )
         due_color = (
@@ -658,41 +645,59 @@ def render() -> None:
         )
         with cols[3]:
             st.markdown(
-                f"<span style='color:{due_color}; font-weight:600;'>"
-                f"{fmt_date(r.due_date)}</span>",
+                f"<div style='text-align:center; color:{due_color}; font-weight:600;'>"
+                f"{fmt_date(r.due_date)}</div>",
                 unsafe_allow_html=True,
             )
         done, total = data.round_progress(r.round_id)
         with cols[4]:
             if r.cancelled:
-                st.markdown("<span style='color:#CBD5E1;'>—</span>",
+                st.markdown("<div style='text-align:center; color:#CBD5E1;'>—</div>",
                             unsafe_allow_html=True)
             else:
-                st.markdown(_progress_bar_html(done, total), unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='text-align:center;'>{_progress_bar_html(done, total)}</div>",
+                    unsafe_allow_html=True,
+                )
         with cols[5]:
             if r.archived:
                 st.markdown(
+                    "<div style='text-align:center;'>"
                     "<span style='background:#F1F5F9; color:#64748B; "
                     "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
-                    "font-weight:600;'>숨김</span>",
+                    "font-weight:600;'>숨김</span></div>",
                     unsafe_allow_html=True,
                 )
             elif r.cancelled:
                 st.markdown(
+                    "<div style='text-align:center;'>"
                     "<span style='background:#FEE2E2; color:#B91C1C; "
                     "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
-                    "font-weight:600;'>취소됨</span>",
+                    "font-weight:600;'>취소됨</span></div>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
-                    badge(TASK_STATUS_KO.get(r.status, r.status)),
+                    f"<div style='text-align:center;'>"
+                    f"{badge(TASK_STATUS_KO.get(r.status, r.status))}</div>",
                     unsafe_allow_html=True,
                 )
         with cols[6]:
             if st.button("점검", key=f"rnd_open_{r.round_id}",
                          use_container_width=True, type="primary"):
                 open_detail = r.round_id
+            # 숨김: '취소' 필터에서만 / 복구: '숨긴 회차' 보기에서만
+            if view_mode == "숨긴 회차" and r.archived:
+                if st.button("복구", key=f"rnd_restore_{r.round_id}",
+                             use_container_width=True):
+                    if data.restore_round(r.round_id):
+                        st.rerun()
+            elif view == "취소" and r.cancelled and not r.archived:
+                if st.button("숨김", key=f"rnd_hide_{r.round_id}",
+                             use_container_width=True,
+                             help="기록은 보존되고 목록에서만 숨겨집니다 (복구 가능)"):
+                    if data.archive_round(r.round_id):
+                        st.rerun()
 
     if open_detail:
         _round_detail_dialog(open_detail)
