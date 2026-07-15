@@ -205,7 +205,7 @@ def render() -> None:
 
     # 필터
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
-    fcol1, fcol2, _ = st.columns([1, 1, 3])
+    fcol1, fcol2, _, toggle_col = st.columns([1, 1, 2, 1])
     with fcol1:
         type_filter = st.selectbox(
             "구분",
@@ -220,6 +220,13 @@ def render() -> None:
             label_visibility="collapsed",
             key="unified_sort",
         )
+    with toggle_col:
+        # 내용 전체 펼치기/접기 단일 토글 (필터 우측 끝). rows 확정 후 반영.
+        _all_expanded = st.session_state.get("def_all_expanded", False)
+        _toggle_all_clicked = st.button(
+            "전체 접기" if _all_expanded else "전체 펼치기",
+            key="def_toggle_all", use_container_width=True,
+        )
 
     rows = all_rows
     if type_filter == "조치 대기만":
@@ -229,18 +236,13 @@ def render() -> None:
     if sort_opt == "오래된순":
         rows = list(reversed(rows))
 
-    # 전체 펼치기 / 접기 (내용 열 일괄 토글)
-    _exp_col, _clp_col, _ = st.columns([1, 1, 4])
-    with _exp_col:
-        if st.button("전체 펼치기", key="def_expand_all", use_container_width=True):
-            for _r in rows:
-                st.session_state[f"def_expand_{_r.type}_{_r.raw_id}"] = True
-            st.rerun()
-    with _clp_col:
-        if st.button("전체 접기", key="def_collapse_all", use_container_width=True):
-            for _r in rows:
-                st.session_state[f"def_expand_{_r.type}_{_r.raw_id}"] = False
-            st.rerun()
+    # 필터 우측 토글 클릭 처리 — 현재 표시 rows 전체를 일괄 펼침/접힘
+    if _toggle_all_clicked:
+        _new_state = not st.session_state.get("def_all_expanded", False)
+        st.session_state["def_all_expanded"] = _new_state
+        for _r in rows:
+            st.session_state[f"def_expand_{_r.type}_{_r.raw_id}"] = _new_state
+        st.rerun()
 
     # 테이블
     st.markdown(_table_header(), unsafe_allow_html=True)
