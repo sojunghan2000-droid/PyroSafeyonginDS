@@ -12,7 +12,7 @@ from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 # 테이블 컬럼 비율 — v1.8: 8컬럼(점검 유형 추가). 위치 등록/QR/최근 점검은 헤더에 ▾ 팝오버가 붙어 폭 여유 확보
 # [장비 ID, 시설 종류, 점검 유형, 위치 등록, QR 상태, 최근 점검, 점검 이력, 작업]
-COL_RATIOS = [0.9, 1.4, 1.3, 0.95, 0.95, 1.2, 0.85, 0.75]
+COL_RATIOS = [0.9, 1.4, 1.3, 0.95, 0.95, 1.2, 0.85, 0.95]
 
 # 장비 건강상태 마커 색 (양호/불량/점검도래)
 _EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
@@ -71,7 +71,7 @@ def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
     return fig
 
 
-# 4개 컬럼 헤더 ? 팝오버 내용 (뜻 + 조치·등록 방법) — 짧게 유지
+# 5개 컬럼 헤더 ? 팝오버 내용 (뜻 + 조치·등록 방법) — 짧게 유지
 _HINT_LOC_MD = ("**위치 등록** — 도면(spot)에 좌표가 등록됐는지 여부.\n\n"
                 "미등록 → **[속성]** 또는 위치 마스터에서 도면 위치 지정.")
 _HINT_QR_MD = ("**QR 상태** — PENDING(스티커 부착·첫 스캔 전) / "
@@ -82,8 +82,11 @@ _HINT_INSP_MD = ("**최근 점검** — 마지막 점검일 + 결과(PASS 양호
                  "FAIL·DUE → 안전점검 관리에서 점검·조치 진행.")
 _HINT_TYPE_MD = ("**점검 유형** — 그 장비에 적용 가능한 점검 종류(월간·분기 등). "
                  "신규 일정 등록 시 이 목록으로 대상 장비를 자동 필터.\n\n"
-                 "등록·변경 → **[속성]** 열기 → "
+                 "등록·변경 → **[변경]** 열기 → "
                  "**'이 장비에 적용 가능한 점검 유형'** 에서 선택 후 저장.")
+_HINT_ACTION_MD = ("**속성** — 장비 상세를 보고 편집합니다.\n\n"
+                   "QR 미리보기·스티커 URL, **적용 점검 유형(주기) 지정**, 위치(도면 spot) 확인.\n\n"
+                   "행의 **[변경]** 버튼으로 엽니다.")
 
 _HDR_LABEL_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
 
@@ -105,7 +108,7 @@ def _hdr_with_hint(col, label: str, tip_md: str) -> None:
 
 
 def _render_table_header() -> None:
-    """테이블 헤더 — 점검 유형/위치 등록/QR 상태/최근 점검 4개 컬럼에 ? 설명 팝오버."""
+    """테이블 헤더 — 점검 유형/위치 등록/QR 상태/최근 점검/속성 5개 컬럼에 ? 설명 팝오버."""
     st.markdown(
         "<style>"
         # st.popover 자동 chevron(▾) 아이콘 숨김 — 라벨 "?"만 노출
@@ -136,8 +139,7 @@ def _render_table_header() -> None:
         _hdr_with_hint(cols[5], "최근 점검", _HINT_INSP_MD)
         cols[6].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 이력</div>",
                          unsafe_allow_html=True)
-        cols[7].markdown(f"<div style='{_HDR_LABEL_CSS}'>작업</div>",
-                         unsafe_allow_html=True)
+        _hdr_with_hint(cols[7], "속성", _HINT_ACTION_MD)
     st.markdown(
         "<hr style='margin:0.15rem 0 0.1rem; border:none; "
         "border-top:1px solid #E2E8F0;'>",
@@ -496,8 +498,8 @@ def render() -> None:
         "<b style='color:#334155;'>주요 기능</b><br>"
         "• <b>시설/장비 신규 등록</b> — 우측 <b>[신규 장비 등록]</b> 버튼에서 "
         "종류·위치(도면)·점검 유형을 지정해 추가<br>"
-        "• <b>시설/장비별 점검 주기 설정</b> — 각 행 <b>[속성]</b>에서 그 장비에 적용할 "
-        "점검 유형(월간·분기 등)을 지정 (신규 일정 등록 시 이 목록으로 자동 필터)"
+        "• <b>시설/장비별 점검 주기 설정</b> — 각 행 <b>속성</b> 컬럼의 <b>[변경]</b>에서 "
+        "그 장비에 적용할 점검 유형(월간·분기 등)을 지정 (신규 일정 등록 시 이 목록으로 자동 필터)"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -683,7 +685,7 @@ def render() -> None:
                          use_container_width=True):
                 open_status_for = e.equipment_id
         with cols[7]:
-            if st.button("속성", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
+            if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
                 _qr_dialog(e.equipment_id)
 
     if open_status_for:
