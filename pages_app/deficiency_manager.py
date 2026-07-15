@@ -13,8 +13,9 @@ from lib.inspection_dialog import (
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 통합 row 컬럼 비율 — 점검 ID·작업 ID를 맨 앞 1·2열로 (10개)
-COL_RATIOS = [1.1, 1.0, 0.9, 1.0, 1.0, 1.3, 2.0, 1.0, 1.0, 1.1]
+# 통합 row 컬럼 비율 (v1.8: 내용 컬럼은 행 펼침으로 이동, 끝에 펼침 토글)
+# [점검ID, 작업ID, 구분, 일자, 장소·시설, 점검종류, 상태, 통보서번호, 작업, 내용토글]
+COL_RATIOS = [1.1, 1.0, 0.9, 1.0, 1.3, 1.4, 1.0, 1.1, 1.1, 0.6]
 
 
 @dataclass
@@ -122,10 +123,10 @@ def _table_header() -> str:
         "<div>일자</div>"
         "<div>장소·시설</div>"
         "<div>점검종류</div>"
-        "<div>내용</div>"
         "<div>상태</div>"
         "<div>통보서 번호</div>"
         "<div>작업</div>"
+        "<div>내용</div>"
         "</div>"
     )
 
@@ -258,9 +259,6 @@ def render() -> None:
             st.markdown(f"<span style='color:#334155;'>{r.category}</span>",
                         unsafe_allow_html=True)
         with cols[6]:
-            st.markdown(f"<span style='color:#0F172A;'>{r.content}</span>",
-                        unsafe_allow_html=True)
-        with cols[7]:
             if r.status == "완료":
                 st.markdown("<span style='color:#16A34A; font-weight:600;'>✓ 완료</span>",
                             unsafe_allow_html=True)
@@ -275,13 +273,13 @@ def render() -> None:
             else:
                 st.markdown(f"<span style='color:#334155;'>{r.status}</span>",
                             unsafe_allow_html=True)
-        with cols[8]:
+        with cols[7]:
             no_color = "#1D4ED8" if r.notice_no != "-" else "#94A3B8"
             st.markdown(
                 f"<span style='color:{no_color}; font-weight:600;'>{r.notice_no}</span>",
                 unsafe_allow_html=True,
             )
-        with cols[9]:
+        with cols[8]:
             # 조치 대기 row에 "조치 입력 →" — 지적사항 / 오동작 분기
             if r.status == "조치 대기" and r.type == "지적사항":
                 if st.button("조치 입력 →", key=f"act_{r.type}_{r.raw_id}",
@@ -296,3 +294,24 @@ def render() -> None:
             else:
                 st.markdown("<span style='color:#94A3B8;'>-</span>",
                             unsafe_allow_html=True)
+        with cols[9]:
+            # 내용 펼침 토글 (기본 접힘)
+            _exp_key = f"def_expand_{r.type}_{r.raw_id}"
+            _expanded = st.session_state.get(_exp_key, False)
+            if st.button("▾" if _expanded else "▸",
+                         key=f"exp_{r.type}_{r.raw_id}", use_container_width=True,
+                         help="내용 접기" if _expanded else "내용 펼치기"):
+                st.session_state[_exp_key] = not _expanded
+                st.rerun()
+
+        # 펼침 시 — 내용 전체 폭으로 (줄바꿈)
+        if st.session_state.get(f"def_expand_{r.type}_{r.raw_id}", False):
+            st.markdown(
+                "<div style='background:#F8FAFC; border:1px solid #E2E8F0; "
+                "border-radius:8px; padding:0.6rem 0.9rem; margin:0.1rem 0 0.5rem; "
+                "color:#0F172A; font-size:0.9rem; line-height:1.7; "
+                "white-space:pre-wrap; word-break:break-word;'>"
+                "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
+                f"내용</span><br>{r.content}</div>",
+                unsafe_allow_html=True,
+            )
