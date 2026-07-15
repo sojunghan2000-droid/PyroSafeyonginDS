@@ -640,10 +640,16 @@ def add_task_to_round_dialog(round_id: str) -> None:
     # 진입 방식 — 장비 선택(사전 위치 설정됨) / 📍 신규 위치 점검(도면)
     # v1.7: '직접 선택'과 'QR 스캔'은 둘 다 등록 장비를 고르는 동일 흐름이라 한 탭으로 통합.
     #        화기작업 구간은 별도 탭 없이 '신규 위치 점검 → 신규 위치'로 통합 (탭 중복 제거)
-    tab_eq, tab_map = st.tabs(["장비 선택 (사전 위치 설정됨)", "신규 위치 점검"])
+    # v1.8: st.tabs → st.radio — 토글 등 rerun 시에도 선택 탭 유지(세션 저장). 활성 탭만 실행
+    _section = st.radio(
+        "진입 방식",
+        ["장비 선택 (사전 위치 설정됨)", "신규 위치 점검"],
+        horizontal=True, label_visibility="collapsed",
+        key=f"add_tsk_section_{round_id}",
+    )
     sel_eq = None        # Equipment (장비 기반 추가)
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
-    with tab_eq:
+    if _section == "장비 선택 (사전 위치 설정됨)":
         st.caption(
             "등록된 장비를 **목록** 또는 **QR 스캔**으로 선택합니다. "
             "장비의 층·구역은 이미 설정되어 있어 자동 반영됩니다."
@@ -721,7 +727,7 @@ def add_task_to_round_dialog(round_id: str) -> None:
                 else:
                     st.error(f"장비를 찾을 수 없습니다: {eq_id}")
 
-    with tab_map:
+    else:  # 신규 위치 점검
         picked = _add_task_map_picker(
             round_id, candidates, all_eq, already_locs,
         )
