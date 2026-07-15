@@ -488,6 +488,20 @@ def render() -> None:
                 use_container_width=True,
             )
 
+    # 주요 기능 안내
+    st.markdown(
+        "<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; "
+        "padding:0.55rem 0.9rem; margin:0.1rem 0 0.7rem; color:#475569; "
+        "font-size:0.85rem; line-height:1.7;'>"
+        "<b style='color:#334155;'>주요 기능</b><br>"
+        "• <b>시설/장비 신규 등록</b> — 우측 <b>[신규 장비 등록]</b> 버튼에서 "
+        "종류·위치(도면)·점검 유형을 지정해 추가<br>"
+        "• <b>시설/장비별 점검 주기 설정</b> — 각 행 <b>[속성]</b>에서 그 장비에 적용할 "
+        "점검 유형(월간·분기 등)을 지정 (신규 일정 등록 시 이 목록으로 자동 필터)"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
     if st.session_state.pop("just_submitted_equipment", False):
         st.success(
             "새 장비가 등록되었습니다 (QR 상태: PENDING). "
