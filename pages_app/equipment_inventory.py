@@ -593,7 +593,7 @@ def render() -> None:
                 )
         else:
             # 전체 층 — 전 층 미니맵 그리드 (접기/펼치기, v1.8)
-            with st.expander("🗺️ 전 층 도면 · 장비 위치", expanded=True):
+            with st.expander("🗺️ 전 층 도면 · 장비 위치", expanded=False):
                 st.markdown(
                     "<div style='color:#475569; font-size:0.85rem; margin-bottom:0.3rem;'>"
                     "🟢 양호 · 🔴 불량 · 🔵 점검도래 — 아래 <b>층</b> 필터에서 "
