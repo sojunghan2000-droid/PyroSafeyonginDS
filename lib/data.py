@@ -320,6 +320,9 @@ class Malfunction:
     action_done: bool = False    # v1.5+: 조치 완료 여부
     action_at: date | None = None
     action_note: str = ""
+    floor: str = ""          # v1.9: 오동작 발생 위치(선택)
+    zone: str = ""
+    spot_id: str | None = None
 
 
 # ---------- Supabase 클라이언트 ----------
@@ -478,6 +481,9 @@ def _row_to_malfunction(r: dict) -> Malfunction:
         action_done=bool(r.get("action_done") or False),
         action_at=_d(r.get("action_at")),
         action_note=r.get("action_note") or "",
+        floor=r.get("floor") or "",
+        zone=r.get("zone") or "",
+        spot_id=r.get("spot_id"),
     )
 
 
@@ -1053,6 +1059,9 @@ def add_malfunction(m: Malfunction) -> None:
         "action_done": m.action_done,
         "action_at": _iso(m.action_at),
         "action_note": m.action_note,
+        "floor": m.floor,
+        "zone": m.zone,
+        "spot_id": m.spot_id,
     }).execute()
     _malfunction_rows.clear()
 
