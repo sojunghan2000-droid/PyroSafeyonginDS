@@ -604,16 +604,6 @@ def render() -> None:
         is_focused = (focus_round == r.round_id)
         cols = st.columns(ROW_COLS, vertical_alignment="center")
         with cols[0]:
-            badges = ""
-            if is_soon:
-                days_left = (r.due_date - today).days
-                day_txt = "오늘 마감" if days_left == 0 else f"D-{days_left}"
-                badges = (
-                    f" <span style='background:#FFEDD5; color:#9A3412; "
-                    f"border:1px solid #F97316; padding:0.1rem 0.4rem; "
-                    f"border-radius:6px; font-size:0.7rem; font-weight:700; "
-                    f"margin-left:0.3rem;'>임박 · {day_txt}</span>"
-                )
             focus_style = (
                 "outline:2px solid #2563EB; outline-offset:2px; border-radius:4px; "
                 if is_focused else ""
@@ -621,7 +611,7 @@ def render() -> None:
             st.markdown(
                 f"<div style='text-align:left;'>"
                 f"<span style='color:#0F172A; font-weight:600; font-size:0.88rem; "
-                f"{focus_style}'>{r.round_id}</span>{badges}</div>",
+                f"{focus_style}'>{r.round_id}</span></div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
