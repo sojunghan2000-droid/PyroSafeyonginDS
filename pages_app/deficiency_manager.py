@@ -141,7 +141,7 @@ def _render_table_header() -> None:
     with st.container(key="defhdr"):
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         _labels = ["점검 ID", "작업 ID", "구분", "일자", "장소·시설",
-                   "점검종류", "상태", "", "작업", "내용"]
+                   "점검종류", "상태", "", "작업", "점검 의견"]
         for _i, _lab in enumerate(_labels):
             if _i == 7:
                 continue  # 통보서 — 아래에서 ? 팝오버와 함께
@@ -359,6 +359,6 @@ def render() -> None:
                 "color:#0F172A; font-size:0.9rem; line-height:1.7; "
                 "white-space:pre-wrap; word-break:break-word;'>"
                 "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
-                f"내용</span><br>{r.content}</div>",
+                f"점검 의견</span><br>{r.content}</div>",
                 unsafe_allow_html=True,
             )

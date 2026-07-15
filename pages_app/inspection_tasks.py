@@ -91,6 +91,17 @@ def _round_detail_dialog(round_id: str) -> None:
         st.error("회차를 찾을 수 없습니다.")
         return
 
+    # 완료 Task의 '점검 완료' 버튼(disabled)을 파랑 대신 녹색으로
+    st.markdown(
+        "<style>"
+        "[class*='st-key-rnd_start_'] button:disabled{"
+        "background:#16A34A!important;border-color:#16A34A!important;"
+        "opacity:1!important;}"
+        "[class*='st-key-rnd_start_'] button:disabled p{color:#FFFFFF!important;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
     tasks_active = data.tasks_of_round(round_id)
     tasks_all = data.tasks_of_round(round_id, include_excluded=True)
     excluded = [t for t in tasks_all if t.excluded]
