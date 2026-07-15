@@ -368,20 +368,26 @@ def render() -> None:
                 st.session_state[_exp_key] = not _expanded
                 st.rerun()
 
-        # 펼침 시 — 점검 의견 + 통보서 번호(있을 때) 전체 폭으로 (줄바꿈)
+        # 펼침 시 — 점검 의견(좌) · 통보서 번호(우) 좌우 분리
         if st.session_state.get(f"def_expand_{r.type}_{r.raw_id}", False):
-            _notice_line = (
-                "<br><span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
-                "통보서 번호</span> "
-                f"<span style='color:#1D4ED8; font-weight:600;'>{r.notice_no}</span>"
-                if r.notice_no and r.notice_no != "-" else ""
-            )
+            _notice_block = ""
+            if r.notice_no and r.notice_no != "-":
+                _notice_block = (
+                    "<div style='flex:0 0 auto; padding-left:1.2rem; "
+                    "border-left:1px solid #E2E8F0; min-width:9rem;'>"
+                    "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
+                    "통보서 번호</span><br>"
+                    f"<span style='color:#1D4ED8; font-weight:600;'>{r.notice_no}</span>"
+                    "</div>"
+                )
             st.markdown(
                 "<div style='background:#F8FAFC; border:1px solid #E2E8F0; "
                 "border-radius:8px; padding:0.6rem 0.9rem; margin:0.1rem 0 0.5rem; "
                 "color:#0F172A; font-size:0.9rem; line-height:1.7; "
-                "white-space:pre-wrap; word-break:break-word;'>"
+                "display:flex; gap:1.2rem; align-items:flex-start;'>"
+                "<div style='flex:1; white-space:pre-wrap; word-break:break-word;'>"
                 "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
-                f"점검 의견</span><br>{r.content}{_notice_line}</div>",
+                f"점검 의견</span><br>{r.content}</div>"
+                f"{_notice_block}</div>",
                 unsafe_allow_html=True,
             )
