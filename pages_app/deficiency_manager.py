@@ -112,8 +112,8 @@ def _type_badge(t: str) -> str:
 
 _HINT_NOTICE_MD = (
     "**상태** — 점검 결과와 조치 진행을 한 컬럼에 함께 표시합니다.\n\n"
-    "**양호** / **불량 · 조치 대기** / **✓ 불량 · 조치 완료** / "
-    "**⚠ 불량 · 조치 불가** / **오동작 · 조치 대기·완료**.\n\n"
+    "**양호** / **조치 대기 (불량)** / **조치 완료 (불량)** / "
+    "**조치 불가 (불량)** / **조치 대기·완료 (오동작)**.\n\n"
     "불량 시 **별지6 통보서**가 발급되며, **통보서 번호는 행을 펼치면**(오른쪽 ▸) 표시됩니다."
 )
 _DEF_HDR_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
@@ -314,17 +314,17 @@ def render() -> None:
                 _res = "오동작" if _is_mal else "불량"
                 if r.status in ("완료", "조치 완료"):
                     _st_html = (f"<span style='color:#16A34A; font-weight:600;'>"
-                                f"✓ {_res} · 조치 완료</span>")
+                                f"조치 완료 ({_res})</span>")
                 elif r.status == "조치 대기":
                     _c = "#EA580C" if _is_mal else "#DC2626"
                     _st_html = (f"<span style='color:{_c}; font-weight:600;'>"
-                                f"● {_res} · 조치 대기</span>")
+                                f"조치 대기 ({_res})</span>")
                 elif r.status == "불가":
                     _st_html = (f"<span style='color:#D97706; font-weight:600;'>"
-                                f"⚠ {_res} · 조치 불가</span>")
+                                f"조치 불가 ({_res})</span>")
                 else:
                     _st_html = (f"<span style='color:#334155; font-weight:600;'>"
-                                f"{_res} · {r.status}</span>")
+                                f"{r.status} ({_res})</span>")
             st.markdown(f"<div style='text-align:center;'>{_st_html}</div>",
                         unsafe_allow_html=True)
         with cols[7]:
