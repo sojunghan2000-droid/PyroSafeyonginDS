@@ -123,14 +123,15 @@ def _round_detail_dialog(round_id: str) -> None:
             f"<span style='color:#7F1D1D; font-size:0.85rem;'> · 사유: "
             f"{r.cancel_reason or '-'}"
             f"{(' · ' + fmt_date(r.cancelled_at)) if r.cancelled_at else ''}"
-            f"{(' · ' + r.cancelled_by) if r.cancelled_by else ''}</span></div>",
+            f"{(' · ' + r.cancelled_by) if r.cancelled_by else ''}"
+            f"{' · <b>숨김</b>' if r.archived else ''}</span></div>",
             unsafe_allow_html=True,
         )
 
-    # 회차 단위 별지5 PDF 다운로드 (지적사항이 1건 이상일 때만 활성)
+    # 회차 단위 별지5 PDF + 취소/숨김/복구 액션
     round_task_ids = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
     round_defs = [d for d in data.load_deficiencies() if d.task_id in round_task_ids]
-    _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
+    _sp, c_cancel, c_hide, c_pdf = st.columns([1.2, 1, 1, 1])
     with c_cancel:
         _cancel_supported = data.round_cancel_supported()
         can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
@@ -145,6 +146,20 @@ def _round_detail_dialog(round_id: str) -> None:
             )
             st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
                       use_container_width=True, disabled=True, help=_cancel_help)
+    with c_hide:
+        if r.archived:
+            if st.button("복구", key=f"round_restore_{round_id}",
+                         use_container_width=True):
+                if data.restore_round(round_id):
+                    st.rerun()
+        elif r.cancelled:
+            if st.button("숨김", key=f"round_hide_{round_id}", use_container_width=True,
+                         help="기록은 보존되고 목록에서만 숨겨집니다 (복구 가능)"):
+                if data.archive_round(round_id):
+                    st.rerun()
+        else:
+            st.button("숨김", key=f"round_hide_dis_{round_id}", use_container_width=True,
+                      disabled=True, help="취소된 회차만 숨길 수 있습니다.")
     with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
@@ -508,9 +523,9 @@ def render() -> None:
     if added_tsk:
         st.success(f"신규 Task {added_tsk} 가 회차에 추가되었습니다.")
 
-    # KPI — 회차 단위 + Task 단위 혼합 (취소 회차 제외)
+    # KPI — 회차 단위 + Task 단위 혼합 (취소·숨김 회차 제외)
     active_rounds = [r for r in rounds if not r.cancelled]
-    cancelled_cnt = len(rounds) - len(active_rounds)
+    cancelled_cnt = sum(1 for r in rounds if r.cancelled and not r.archived)
     total_rounds = len(active_rounds)
     overdue_rounds = sum(1 for r in active_rounds if r.status == "Overdue")
     in_prog_rounds = sum(1 for r in active_rounds if r.status == "In Progress")
@@ -526,7 +541,8 @@ def render() -> None:
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
-    filter_col, _, tab_col = st.columns([2.5, 2, 3])
+    archived_cnt = sum(1 for r in rounds if r.archived)
+    filter_col, mode_col, tab_col = st.columns([2.1, 1.4, 3])
     with tab_col:
         view = st.radio(
             "tab",
@@ -542,16 +558,30 @@ def render() -> None:
             type_options,
             label_visibility="collapsed",
         )
+    with mode_col:
+        # 보기 모드 — 숨긴(취소 후 숨김) 회차는 일반 목록·상태 필터에서 제외
+        view_mode = st.selectbox(
+            "보기",
+            ["일반 목록", "숨긴 회차"],
+            label_visibility="collapsed",
+            key="tasks_view_mode",
+            help=(f"숨긴 회차 {archived_cnt}건 — '숨긴 회차' 선택 시 확인·복구"
+                  if archived_cnt else "숨긴 회차 없음"),
+        )
 
-    visible = rounds
-    if view == "취소":
-        visible = [r for r in visible if r.cancelled]
+    if view_mode == "숨긴 회차":
+        visible = [r for r in rounds if r.archived]
     else:
-        target_status = TAB_TO_STATUS.get(view)
-        if target_status:
-            # 특정 상태 탭 — 취소 회차 제외
-            visible = [r for r in visible if not r.cancelled and r.status == target_status]
-        # "전체"는 취소 포함 전부 노출 (취소됨 배지로 구분)
+        visible = [r for r in rounds if not r.archived]
+        if view == "취소":
+            visible = [r for r in visible if r.cancelled]
+        else:
+            target_status = TAB_TO_STATUS.get(view)
+            if target_status:
+                # 특정 상태 탭 — 취소 회차 제외
+                visible = [r for r in visible
+                           if not r.cancelled and r.status == target_status]
+            # "전체"는 취소 포함(숨김 제외) 노출 (취소됨 배지로 구분)
     if type_filter != "전체 유형":
         visible = [r for r in visible if r.task_type == type_filter]
 
@@ -640,7 +670,14 @@ def render() -> None:
             else:
                 st.markdown(_progress_bar_html(done, total), unsafe_allow_html=True)
         with cols[5]:
-            if r.cancelled:
+            if r.archived:
+                st.markdown(
+                    "<span style='background:#F1F5F9; color:#64748B; "
+                    "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
+                    "font-weight:600;'>숨김</span>",
+                    unsafe_allow_html=True,
+                )
+            elif r.cancelled:
                 st.markdown(
                     "<span style='background:#FEE2E2; color:#B91C1C; "
                     "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
