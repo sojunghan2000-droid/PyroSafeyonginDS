@@ -1044,7 +1044,10 @@ def task_inspect_inline(task_id: str) -> None:
     override_zone = eq.zone if eq else t.zone
     override_label = None  # 사용자 표시용
 
-    with st.expander("장소·구역 정정 (선택)"):
+    # v1.9: Streamlit 1.51은 st.expander에 key를 못 줘 열림 상태가 session_state에
+    # 저장되지 않는다 → 중첩 다이얼로그+동적 도면 환경에서 rerun 시 접히며 "초기화"처럼
+    # 보인다. expanded=True로 고정해 항상 펼쳐두어 접힘/초기화를 원천 차단한다.
+    with st.expander("장소·구역 정정 (선택)", expanded=True):
         st.caption(
             "장비 정보의 층/구역이 맞지 않으면 QR 스캔으로 다른 장비를 인식하거나 "
             "도면의 위치(spot)를 직접 골라 정정합니다. 정정된 값은 별지5 row에 반영됩니다."
