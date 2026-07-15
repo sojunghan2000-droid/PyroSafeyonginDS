@@ -1849,27 +1849,19 @@ def equipment_dialog() -> None:
     with c1:
         category = st.selectbox("카테고리", options=EQ_CATEGORIES, key="eq_dlg_cat")
     with c2:
-        # 선택 카테고리에 맞춘 장비명 예시(placeholder)
-        _name_example = {
-            "소화기": "예: ABC 소화기 (5kg)",
-            "확산소화기": "예: 자동확산소화기",
-            "간이소화장치": "예: 캐비닛형 간이소화장치",
-            "비상경보장치": "예: 비상경보장치 #B2-04",
-            "가스누설경보기": "예: 가스누설경보기",
-            "간이피난유도선": "예: 간이피난유도선 #2-D-01",
-            "방화포": "예: 방화포 #6-H-04",
-            "감지기": "예: 광전식 연기감지기",
-            "발신기": "예: P형 발신기",
-            "수신기": "예: R형 수신기",
-            "유도등": "예: 피난구 유도등",
-            "스프링클러": "예: 스프링클러 헤드",
-            "소화전": "예: 옥내소화전 (호스릴)",
-            "기타": "예: 소방시설 명칭",
-        }.get(category, "예: 소방시설 명칭")
+        # 카테고리 기반 장비명 자동 생성 (수정 가능). 카테고리를 바꾸면
+        # 미수정(=이전 자동값 그대로) 상태일 때만 새 자동값으로 교체하고,
+        # 사용자가 직접 고친 이름은 보존한다.
+        _auto_name = f"{category} {auto_eid.split('-')[-1]}"  # 예: 소화기 0015
+        _name_key = "eq_dlg_name"
+        _name_auto_prev = "eq_dlg_name_auto_prev"
+        if st.session_state.get(_name_key, "") in ("", st.session_state.get(_name_auto_prev)):
+            st.session_state[_name_key] = _auto_name
+        st.session_state[_name_auto_prev] = _auto_name
         equipment_name = st.text_input(
             "장비명",
-            placeholder=_name_example,
-            key="eq_dlg_name",
+            key=_name_key,
+            help="카테고리 기준으로 자동 생성된 이름입니다. 필요 시 수정하세요.",
         )
 
     # ── 위치 지정: 기존 spot 선택 OR 신규 위치 즉석 생성 (v1.7 전체 이관) ──
