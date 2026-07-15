@@ -887,7 +887,7 @@ NAV_PAGES = [
 # (page_key, admin_tab_label) — admin_tab 은 admin_center 의 라디오 섹션과 매칭.
 NAV_ADMIN_HEADER = ("admin", "관리자 메뉴")
 NAV_ADMIN_SUB = [
-    ("admin", "위치 마스터"),
+    ("admin", "위치 마스터 관리"),
     ("admin", "사용자 관리"),
 ]
 

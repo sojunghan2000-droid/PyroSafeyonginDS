@@ -930,7 +930,10 @@ def render() -> None:
 
     # 사이드바 하위 메뉴에서 어떤 탭을 활성화할지 결정 (admin_tab 세션 키)
     # st.tabs는 외부 활성화가 어려우므로 st.radio 패턴으로 구현
-    tabs = ["위치 마스터", "점검 유형", "사용자 관리"]
+    tabs = ["위치 마스터 관리", "점검 유형 관리", "사용자 관리"]
+    # 라벨 변경(v1.8) 이전 세션에 캐시된 옛 라벨이 남아 있으면 라디오 오류 → 정리
+    if st.session_state.get("admin_tab") not in tabs:
+        st.session_state.pop("admin_tab", None)
     section = st.radio(
         "관리자 섹션",
         tabs,
@@ -939,9 +942,9 @@ def render() -> None:
         label_visibility="collapsed",
     )
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
-    if section == "위치 마스터":
+    if section == "위치 마스터 관리":
         _spot_master_tab()
-    elif section == "점검 유형":
+    elif section == "점검 유형 관리":
         _inspection_type_tab()
     else:
         _user_admin_tab()
