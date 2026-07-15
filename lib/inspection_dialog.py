@@ -912,10 +912,16 @@ def task_inspect_inline(task_id: str) -> None:
             "장비 정보의 층/구역이 맞지 않으면 QR 스캔으로 다른 장비를 인식하거나 "
             "도면의 위치(spot)를 직접 골라 정정합니다. 정정된 값은 별지5 row에 반영됩니다."
         )
-        tab_qr, tab_spot = st.tabs(["QR 스캔", "도면 spot 선택"])
+        # v1.8: st.tabs → st.radio — 토글 rerun 시 선택 탭 유지
+        _sec2 = st.radio(
+            "정정 방식",
+            ["QR 스캔", "도면 spot 선택"],
+            horizontal=True, label_visibility="collapsed",
+            key=f"tsk_loc_section_{task_id}",
+        )
 
         # 1) QR 스캔 정정
-        with tab_qr:
+        if _sec2 == "QR 스캔":
             try:
                 from streamlit_qrcode_scanner import qrcode_scanner
                 qr_val = qrcode_scanner(key=f"tsk_loc_qr_{task_id}")
@@ -956,7 +962,7 @@ def task_inspect_inline(task_id: str) -> None:
                     st.warning(f"장비를 찾을 수 없습니다: {picked}")
 
         # 2) 도면 spot 선택 정정 — 실제 도면에서 마커 클릭
-        with tab_spot:
+        else:  # 도면 spot 선택
             import base64
             from pathlib import Path
             import plotly.graph_objects as go
