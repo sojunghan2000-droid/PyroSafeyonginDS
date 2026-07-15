@@ -1673,9 +1673,26 @@ def equipment_dialog() -> None:
     with c1:
         category = st.selectbox("카테고리", options=EQ_CATEGORIES, key="eq_dlg_cat")
     with c2:
+        # 선택 카테고리에 맞춘 장비명 예시(placeholder)
+        _name_example = {
+            "소화기": "예: ABC 소화기 (5kg)",
+            "확산소화기": "예: 자동확산소화기",
+            "간이소화장치": "예: 캐비닛형 간이소화장치",
+            "비상경보장치": "예: 비상경보장치 #B2-04",
+            "가스누설경보기": "예: 가스누설경보기",
+            "간이피난유도선": "예: 간이피난유도선 #2-D-01",
+            "방화포": "예: 방화포 #6-H-04",
+            "감지기": "예: 광전식 연기감지기",
+            "발신기": "예: P형 발신기",
+            "수신기": "예: R형 수신기",
+            "유도등": "예: 피난구 유도등",
+            "스프링클러": "예: 스프링클러 헤드",
+            "소화전": "예: 옥내소화전 (호스릴)",
+            "기타": "예: 소방시설 명칭",
+        }.get(category, "예: 소방시설 명칭")
         equipment_name = st.text_input(
             "장비명",
-            placeholder="예: ABC Extinguisher (5kg)",
+            placeholder=_name_example,
             key="eq_dlg_name",
         )
 
