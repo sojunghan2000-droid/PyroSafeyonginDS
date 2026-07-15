@@ -114,7 +114,7 @@ _HINT_NOTICE_MD = (
     "**불량 여부** — 지적사항 점검 결과가 불량이면 **불량**, 양호면 **양호**로 표시합니다.\n\n"
     "불량 시 **별지6 조치 결과 통보서**가 자동 발급되며, "
     "**통보서 번호는 행을 펼치면**(오른쪽 ▸) 점검 의견과 함께 표시됩니다.\n\n"
-    "**오동작**은 별지9로 관리되어 통보서가 없으므로 `-` 로 표시됩니다."
+    "**오동작**은 별지9로 관리되어 통보서가 없으므로 **오동작**으로 표시됩니다."
 )
 _DEF_HDR_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
 
@@ -321,10 +321,12 @@ def render() -> None:
                 st.markdown(f"<span style='color:#334155;'>{r.status}</span>",
                             unsafe_allow_html=True)
         with cols[7]:
-            # 불량 여부 — 지적사항만 양호/불량. 오동작(별지9)은 통보서 없음 → '-'
+            # 불량 여부 — 지적사항만 양호/불량. 오동작(별지9)은 '오동작'으로 표시
             if r.type == "오동작":
                 st.markdown(
-                    "<div style='text-align:center; color:#94A3B8;'>-</div>",
+                    "<div style='text-align:center;'>"
+                    "<span style='color:#EA580C; font-weight:600; "
+                    "font-size:0.82rem;'>오동작</span></div>",
                     unsafe_allow_html=True,
                 )
             elif r.content == "양호":
