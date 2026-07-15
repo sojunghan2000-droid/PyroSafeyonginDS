@@ -77,8 +77,9 @@ def _build_unified_rows() -> list[UnifiedRow]:
         rows.append(UnifiedRow(
             type="오동작",
             date=m.occurred_on,
-            location=m.category,
-            category="—",
+            location=(f"{m.floor} / {m.zone}"
+                      if (m.floor or m.zone) else "위치 미지정"),
+            category=m.category,
             content=m.detail,
             status=status,
             notice_no="-",
