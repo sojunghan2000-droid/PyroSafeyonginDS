@@ -525,7 +525,7 @@ def render() -> None:
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
-    f1, f2, _, tab_col = st.columns([0.8, 0.8, 0.4, 3.5])
+    f1, f2, cat_col, _ = st.columns([0.9, 0.9, 1.7, 1.9])
     with f1:
         floor_filter = st.selectbox(
             "Filter",
@@ -539,18 +539,23 @@ def render() -> None:
             ["최근 점검순", "위치 순", "상태 순"],
             label_visibility="collapsed",
         )
-    with tab_col:
-        view = st.radio(
-            "view",
-            ["전체", "소화기·소화장치", "경보·감지", "소화전"],
-            horizontal=True,
+    with cat_col:
+        # 장비 종류 필터 (v1.8: 라디오 → 콤보박스, 표시 그룹 재구성)
+        view = st.selectbox(
+            "장비 종류",
+            ["전체", "소화기 · 소화대차", "방화포", "간이소화장치 · 호스릴 소화전",
+             "간이피난유도선", "비상경보장치", "경보 · 감지"],
             label_visibility="collapsed",
+            key="eq_cat_filter",
         )
 
     cat_filter_map = {
-        "소화기·소화장치": {"소화기", "확산소화기", "간이소화장치"},
-        "경보·감지": {"비상경보장치", "가스누설경보기", "감지기", "발신기", "수신기"},
-        "소화전": {"소화전"},
+        "소화기 · 소화대차": {"소화기", "확산소화기"},
+        "방화포": {"방화포"},
+        "간이소화장치 · 호스릴 소화전": {"간이소화장치", "소화전"},
+        "간이피난유도선": {"간이피난유도선"},
+        "비상경보장치": {"비상경보장치"},
+        "경보 · 감지": {"가스누설경보기", "감지기", "발신기", "수신기"},
     }
 
     rows = eq
