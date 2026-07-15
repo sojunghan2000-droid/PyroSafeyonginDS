@@ -410,10 +410,16 @@ def render() -> None:
                      use_container_width=True, key="open_inspect_qr"):
             _inspect_qr_dialog()
 
-    tab_summary, tab_grid = st.tabs(["현황 요약", "층별 도면"])
-    with tab_summary:
+    # v1.8: st.tabs → st.radio — 층별 도면 탭의 도면 잠금 토글 등 rerun 시 탭 유지
+    _dash_section = st.radio(
+        "대시보드 탭",
+        ["현황 요약", "층별 도면"],
+        horizontal=True, label_visibility="collapsed",
+        key="dashboard_section",
+    )
+    if _dash_section == "현황 요약":
         _summary_tab()
-    with tab_grid:
+    else:
         _grid_tab()
 
 
