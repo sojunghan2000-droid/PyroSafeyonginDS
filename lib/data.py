@@ -103,7 +103,10 @@ INSPECTION_TYPE_CATEGORY_DEFAULTS: dict[str, list[str]] = {
 
 
 def default_inspection_types_for(category: str) -> list[str]:
-    return list(INSPECTION_TYPE_CATEGORY_DEFAULTS.get(category, []))
+    # v1.8: 현재 카탈로그에 존재하는 이름만 반환 — 기본 유형 rename 시 옛 이름(orphan) 제거
+    defaults = INSPECTION_TYPE_CATEGORY_DEFAULTS.get(category, [])
+    catalog = set(load_inspection_types())
+    return [t for t in defaults if t in catalog]
 
 
 # ---------- v1.6: 신규 점검 종류 카탈로그 (별지5 양식 inspection_types) ----------
@@ -810,6 +813,32 @@ def delete_inspection_type(name: str) -> tuple[bool, str]:
     _db().table("inspection_types").delete().eq("name", name).execute()
     _inspection_type_rows.clear()
     return True, "삭제되었습니다."
+
+
+def rename_inspection_type(old: str, new: str) -> tuple[bool, str]:
+    """유형 이름 변경. 참조(회차·Task·장비)까지 원자적으로 연쇄 갱신. (성공여부, 메시지)."""
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not new:
+        return False, "새 이름을 입력하세요."
+    if new == old:
+        return False, "이름이 같습니다."
+    names = {r["name"] for r in _inspection_type_rows()}
+    if old not in names:
+        return False, "존재하지 않는 유형입니다."
+    if new in names:
+        return False, "이미 존재하는 이름입니다."
+    try:
+        _db().rpc("rename_inspection_type",
+                  {"old_name": old, "new_name": new}).execute()
+    except Exception:
+        return False, "이름 변경 중 오류가 발생했습니다."
+    # 연쇄 갱신된 테이블 캐시 모두 무효화
+    _inspection_type_rows.clear()
+    _equipment_rows.clear()
+    _round_rows.clear()
+    _task_rows.clear()
+    return True, "이름이 변경되었습니다."
 
 
 def record_equipment_inspection(equipment_id: str, inspected_on: date,

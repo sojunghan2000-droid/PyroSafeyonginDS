@@ -120,3 +120,24 @@ alter table public.inspection_rounds
   add column if not exists cancel_reason text,
   add column if not exists cancelled_at  timestamptz,
   add column if not exists cancelled_by  text;
+
+-- 8) 점검 유형 명칭 변경 함수 (v1.8) — 이름 변경 시 참조를 원자적으로 연쇄 갱신
+create or replace function public.rename_inspection_type(old_name text, new_name text)
+returns void language plpgsql as $$
+begin
+  new_name := btrim(new_name);
+  if new_name = '' then raise exception 'empty name'; end if;
+  if not exists (select 1 from public.inspection_types where name = old_name) then
+    raise exception 'type not found: %', old_name;
+  end if;
+  if exists (select 1 from public.inspection_types where name = new_name) then
+    raise exception 'name exists: %', new_name;
+  end if;
+  update public.inspection_types  set name = new_name       where name = old_name;
+  update public.inspection_rounds set task_type = new_name  where task_type = old_name;
+  update public.inspection_tasks  set task_type = new_name  where task_type = old_name;
+  update public.equipment set inspection_types = (
+      select jsonb_agg(case when t = old_name then new_name else t end)
+      from jsonb_array_elements_text(inspection_types) t)
+    where inspection_types ? old_name;
+end $$;
