@@ -1634,21 +1634,45 @@ def malfunction_dialog() -> None:
         key="mal_dlg_detail",
     )
 
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.84rem; margin:0.4rem 0 0.2rem;'>"
+        "<b>위치 (선택)</b> — 오동작 발생 위치를 도면에서 선택합니다. "
+        "도면 밖·불명 위치는 비워둡니다.</div>",
+        unsafe_allow_html=True,
+    )
+    picked_loc = _location_map_picker("mal_dlg_loc", highlight_category=category)
+    if picked_loc:
+        pc1, pc2 = st.columns([4, 1])
+        with pc1:
+            st.success(f"선택 위치: {picked_loc['label']}")
+        with pc2:
+            if st.button("위치 지우기", key="mal_dlg_loc_clear",
+                         use_container_width=True):
+                st.session_state.pop("mal_dlg_loc_picked", None)
+                st.rerun()
+    else:
+        st.caption("위치 미지정 — 필요 시 위 도면에서 선택하세요.")
+
     if st.button("등록", type="primary", use_container_width=True, key="mal_dlg_submit"):
         if not detail.strip():
             st.error("오동작 내용을 입력해 주세요.")
             return
 
+        _loc = st.session_state.get("mal_dlg_loc_picked") or {}
         new_id = data.next_malfunction_id()
         add_malfunction(Malfunction(
             malfunction_id=new_id,
             category=category,  # type: ignore[arg-type]
             occurred_on=occurred,
             detail=detail.strip(),
-            action="",  # 조치는 후속 시점에 작업 조치 관리에서 입력
-            confirmer=reporter,  # 최초 발견자
+            action="",
+            confirmer=reporter,
             action_done=False,
+            floor=_loc.get("floor", ""),
+            zone=_loc.get("zone", ""),
+            spot_id=_loc.get("spot_id"),
         ))
+        st.session_state.pop("mal_dlg_loc_picked", None)
         st.session_state["just_submitted_malfunction"] = True
         st.rerun()
 
