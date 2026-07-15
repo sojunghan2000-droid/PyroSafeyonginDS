@@ -549,9 +549,12 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             f"</div>",
             unsafe_allow_html=True,
         )
+        _desc_key = f"add_tsk_temp_desc_{round_id}"
+        if _desc_key not in st.session_state:
+            st.session_state[_desc_key] = "좌표 참고"  # 기본값 (수정 가능)
         desc = st.text_input(
             "위치 설명 (room_name) *",
-            key=f"add_tsk_temp_desc_{round_id}",
+            key=_desc_key,
             placeholder="예: 4F 동측 출입구 옆",
         )
         bcols = st.columns([1, 1])
