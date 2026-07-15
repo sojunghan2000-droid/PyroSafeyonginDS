@@ -838,9 +838,9 @@ def _inspection_type_tab() -> None:
                 "border-top:1px solid #E2E8F0;'>", unsafe_allow_html=True)
 
     # 목록 헤더
-    ratios = [2.2, 0.9, 0.8, 1.0, 0.9]
+    ratios = [2.0, 0.8, 0.7, 0.95, 0.95, 0.85]
     hcols = st.columns(ratios, vertical_alignment="center")
-    for c, t in zip(hcols, ["유형", "사용중", "기본", "활성", "삭제"]):
+    for c, t in zip(hcols, ["유형", "사용중", "기본", "활성", "이름 변경", "삭제"]):
         c.markdown(
             f"<div style='color:#64748B; font-weight:600; font-size:0.78rem; "
             f"text-align:center;'>{t}</div>", unsafe_allow_html=True,
@@ -874,8 +874,13 @@ def _inspection_type_tab() -> None:
                          key=f"insp_active_{name}", use_container_width=True):
                 data.set_inspection_type_active(name, not is_active)
                 st.rerun()
-        # 삭제 — 기본·사용중은 불가
+        # 이름 변경 — 전 유형 가능 (기본 포함, 참조 연쇄 갱신)
         with cols[4]:
+            if st.button("이름 변경", key=f"insp_rename_btn_{name}",
+                         use_container_width=True):
+                st.session_state[f"insp_rename_open_{name}"] = True
+        # 삭제 — 기본·사용중은 불가
+        with cols[5]:
             deletable = (not builtin) and usage == 0
             if st.button("삭제", key=f"insp_del_{name}", use_container_width=True,
                          disabled=not deletable,
@@ -885,6 +890,32 @@ def _inspection_type_tab() -> None:
                     st.rerun()
                 else:
                     st.error(msg)
+
+        # 인라인 이름 변경 폼
+        if st.session_state.get(f"insp_rename_open_{name}"):
+            _rk = f"insp_rename_input_{name}"
+            if _rk not in st.session_state:
+                st.session_state[_rk] = name  # 현재 이름 프리필 (value= 경고 회피)
+            rc1, rc2, rc3 = st.columns([2.0, 0.7, 0.7], vertical_alignment="center")
+            with rc1:
+                st.text_input("새 이름", key=_rk, label_visibility="collapsed",
+                              placeholder="새 이름 입력")
+            with rc2:
+                if st.button("저장", key=f"insp_rename_save_{name}",
+                             use_container_width=True, type="primary"):
+                    ok, msg = data.rename_inspection_type(name, st.session_state[_rk])
+                    if ok:
+                        st.session_state.pop(f"insp_rename_open_{name}", None)
+                        st.session_state.pop(_rk, None)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with rc3:
+                if st.button("취소", key=f"insp_rename_cancel_{name}",
+                             use_container_width=True):
+                    st.session_state.pop(f"insp_rename_open_{name}", None)
+                    st.session_state.pop(_rk, None)
+                    st.rerun()
 
 
 def render() -> None:
