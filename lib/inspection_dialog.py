@@ -694,7 +694,7 @@ def _location_map_picker(key_prefix: str, highlight_category: str | None = None)
         for sp in empty:
             xs.append(sp.x_pct / 100 * FIG_W)
             ys.append(FIG_H - sp.y_pct / 100 * FIG_H)
-            cd.append(("spot", sp.spot_id, sp.room_name, sp.room_name, sp.spot_id))
+            cd.append(("spot", sp.spot_id, sp.room_name, "빈 위치", sp.spot_id))
         fig.add_trace(go.Scatter(
             x=xs, y=ys, mode="markers",
             marker=dict(size=14, color="#94A3B8",
