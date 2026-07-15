@@ -13,9 +13,9 @@ from lib.inspection_dialog import (
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 통합 row 컬럼 비율 (v1.8: 내용 컬럼은 행 펼침으로 이동, 끝에 펼침 토글)
-# [점검ID, 작업ID, 구분, 일자, 장소·시설, 점검종류, 상태, 통보서번호, 작업, 내용토글]
-COL_RATIOS = [1.1, 1.0, 0.9, 1.0, 1.3, 1.4, 1.0, 1.1, 1.1, 0.6]
+# 통합 row 컬럼 비율 (v1.8: 내용→펼침, 끝 펼침 토글 / 불량여부·상태 스왑)
+# [점검ID, 작업ID, 구분, 일자, 장소·시설, 점검종류, 불량여부, 상태, 작업, 점검의견토글]
+COL_RATIOS = [1.1, 1.0, 0.9, 1.0, 1.3, 1.4, 1.1, 1.0, 1.1, 0.6]
 
 
 @dataclass
@@ -141,13 +141,13 @@ def _render_table_header() -> None:
     with st.container(key="defhdr"):
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         _labels = ["점검 ID", "작업 ID", "구분", "일자", "장소·시설",
-                   "점검종류", "상태", "", "작업", "점검 의견"]
+                   "점검종류", "", "상태", "작업", "점검 의견"]
         for _i, _lab in enumerate(_labels):
-            if _i == 7:
-                continue  # 통보서 — 아래에서 ? 팝오버와 함께
+            if _i == 6:
+                continue  # 불량 여부 — 아래에서 ? 팝오버와 함께
             cols[_i].markdown(f"<div style='{_DEF_HDR_CSS}'>{_lab}</div>",
                               unsafe_allow_html=True)
-        with cols[7]:
+        with cols[6]:
             _lc, _pc = st.columns([1, 0.4], vertical_alignment="center")
             _lc.markdown(
                 f"<div style='{_DEF_HDR_CSS}'>불량 여부</div>",
@@ -306,21 +306,6 @@ def render() -> None:
             st.markdown(f"<span style='color:#334155;'>{r.category}</span>",
                         unsafe_allow_html=True)
         with cols[6]:
-            if r.status == "완료":
-                st.markdown("<span style='color:#16A34A; font-weight:600;'>✓ 완료</span>",
-                            unsafe_allow_html=True)
-            elif r.status == "조치 완료":
-                st.markdown("<span style='color:#16A34A; font-weight:600;'>✓ 조치 완료</span>",
-                            unsafe_allow_html=True)
-            elif r.status == "조치 대기":
-                st.markdown("<span style='color:#DC2626; font-weight:600;'>● 조치 대기</span>",
-                            unsafe_allow_html=True)
-            elif r.status == "불가":
-                st.markdown(badge("불가"), unsafe_allow_html=True)
-            else:
-                st.markdown(f"<span style='color:#334155;'>{r.status}</span>",
-                            unsafe_allow_html=True)
-        with cols[7]:
             # 불량 여부 — 지적사항만 양호/불량. 오동작(별지9)은 '오동작'으로 표시
             if r.type == "오동작":
                 st.markdown(
@@ -343,6 +328,21 @@ def render() -> None:
                     "font-weight:600; font-size:0.82rem;'>불량</span></div>",
                     unsafe_allow_html=True,
                 )
+        with cols[7]:
+            if r.status == "완료":
+                st.markdown("<span style='color:#16A34A; font-weight:600;'>✓ 완료</span>",
+                            unsafe_allow_html=True)
+            elif r.status == "조치 완료":
+                st.markdown("<span style='color:#16A34A; font-weight:600;'>✓ 조치 완료</span>",
+                            unsafe_allow_html=True)
+            elif r.status == "조치 대기":
+                st.markdown("<span style='color:#DC2626; font-weight:600;'>● 조치 대기</span>",
+                            unsafe_allow_html=True)
+            elif r.status == "불가":
+                st.markdown(badge("불가"), unsafe_allow_html=True)
+            else:
+                st.markdown(f"<span style='color:#334155;'>{r.status}</span>",
+                            unsafe_allow_html=True)
         with cols[8]:
             # 조치 대기 row에 "조치 입력 →" — 지적사항 / 오동작 분기
             if r.status == "조치 대기" and r.type == "지적사항":
