@@ -110,24 +110,56 @@ def _type_badge(t: str) -> str:
     )
 
 
-def _table_header() -> str:
-    return (
-        "<div style='display:grid; "
-        f"grid-template-columns: {' '.join(f'{r}fr' for r in COL_RATIOS)}; "
-        "gap: 0.4rem; padding: 0.6rem 0.4rem; "
-        "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center; "
-        "border-bottom:1px solid #E2E8F0;'>"
-        "<div>점검 ID</div>"
-        "<div>작업 ID</div>"
-        "<div>구분</div>"
-        "<div>일자</div>"
-        "<div>장소·시설</div>"
-        "<div>점검종류</div>"
-        "<div>상태</div>"
-        "<div>통보서 번호</div>"
-        "<div>작업</div>"
-        "<div>내용</div>"
-        "</div>"
+_HINT_NOTICE_MD = (
+    "**통보서 (불량 발급)** — 점검 결과 **'불량'** 판정 시 자동 발급되는 "
+    "**별지6 조치 결과 통보서** 번호입니다 (형식 `YYYY-MM-DD-NN`).\n\n"
+    "`조치 대기`는 이 화면에서 후속 조치 후 완료 처리하며, "
+    "**양호·오동작은 발급되지 않아 `-`** 로 표시됩니다."
+)
+_DEF_HDR_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
+
+
+def _render_table_header() -> None:
+    # 통보서 컬럼 헤더에 ? 팝오버 (시설 관리와 동일 패턴)
+    st.markdown(
+        "<style>"
+        ".st-key-defhdr [data-testid='stPopoverButton'] svg{display:none!important;}"
+        ".st-key-defhdr [data-testid='stPopoverButton']{"
+        "background:#F1F5F9!important;border:1px solid #E2E8F0!important;"
+        "box-shadow:none!important;border-radius:50%!important;"
+        "width:1.1rem!important;height:1.1rem!important;min-height:0!important;"
+        "padding:0!important;line-height:1!important;display:inline-flex!important;"
+        "align-items:center!important;justify-content:center!important;"
+        "font-size:0.68rem!important;font-weight:700!important;color:#64748B!important;}"
+        ".st-key-defhdr [data-testid='stPopoverButton'] p{margin:0!important;"
+        "font-size:0.68rem!important;font-weight:700!important;line-height:1!important;}"
+        ".st-key-defhdr [data-testid='stPopoverButton']:hover{"
+        "background:#E2E8F0!important;color:#334155!important;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    with st.container(key="defhdr"):
+        cols = st.columns(COL_RATIOS, vertical_alignment="center")
+        _labels = ["점검 ID", "작업 ID", "구분", "일자", "장소·시설",
+                   "점검종류", "상태", "", "작업", "내용"]
+        for _i, _lab in enumerate(_labels):
+            if _i == 7:
+                continue  # 통보서 — 아래에서 ? 팝오버와 함께
+            cols[_i].markdown(f"<div style='{_DEF_HDR_CSS}'>{_lab}</div>",
+                              unsafe_allow_html=True)
+        with cols[7]:
+            _lc, _pc = st.columns([1, 0.4], vertical_alignment="center")
+            _lc.markdown(
+                f"<div style='{_DEF_HDR_CSS}'>통보서<br>(불량 발급)</div>",
+                unsafe_allow_html=True,
+            )
+            with _pc:
+                with st.popover("?", use_container_width=False):
+                    st.markdown(_HINT_NOTICE_MD)
+    st.markdown(
+        "<hr style='margin:0 0 0.1rem; border:none; "
+        "border-top:1px solid #E2E8F0;'>",
+        unsafe_allow_html=True,
     )
 
 
@@ -245,7 +277,7 @@ def render() -> None:
         st.rerun()
 
     # 테이블
-    st.markdown(_table_header(), unsafe_allow_html=True)
+    _render_table_header()
 
     for r in rows:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
