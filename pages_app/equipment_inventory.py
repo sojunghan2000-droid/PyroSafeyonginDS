@@ -320,7 +320,7 @@ def _status_dialog(equipment_id: str) -> None:
         st.rerun()
 
 
-@st.dialog("QR 코드 미리보기", width="large")
+@st.dialog("속성", width="large")
 def _qr_dialog(equipment_id: str) -> None:
     """선택된 장비의 QR 모달."""
     eq = next((x for x in data.load_equipment() if x.equipment_id == equipment_id), None)
