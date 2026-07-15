@@ -1062,8 +1062,10 @@ def task_inspect_inline(task_id: str) -> None:
             try:
                 from streamlit_qrcode_scanner import qrcode_scanner
                 qr_val = qrcode_scanner(key=f"tsk_loc_qr_{task_id}")
-            except Exception as e:
-                st.error(f"QR 스캐너를 불러올 수 없습니다 ({e}).")
+            except Exception:
+                st.caption(
+                    "QR 스캐너를 사용할 수 없는 환경입니다. 아래 수동 입력을 이용하세요."
+                )
                 qr_val = None
             qr_manual = st.text_input(
                 "수동 입력 (EQ-NNNN 또는 QR 페이로드 URL)",
@@ -1156,6 +1158,9 @@ def task_inspect_inline(task_id: str) -> None:
                         parts = override_label.split("→")[1].strip().split(" ")
                         if parts:
                             cur_spot_id = parts[0]
+                    elif eq and eq.spot_id:
+                        # 정정 전 — 장비의 현재 위치를 파란 마커로 표시
+                        cur_spot_id = eq.spot_id
 
                     other_xs, other_ys, other_txt, other_cd = [], [], [], []
                     cur_xs, cur_ys, cur_txt = [], [], []
@@ -1648,6 +1653,11 @@ def malfunction_dialog() -> None:
         with pc2:
             if st.button("위치 지우기", key="mal_dlg_loc_clear",
                          use_container_width=True):
+                # picked 뿐 아니라 도면 차트의 잔여 선택 상태까지 비워야
+                # rerun 시 픽커가 같은 점을 다시 집지 않는다
+                for _k in [k for k in st.session_state
+                           if k.startswith("mal_dlg_loc_chart_")]:
+                    st.session_state.pop(_k, None)
                 st.session_state.pop("mal_dlg_loc_picked", None)
                 st.rerun()
     else:
@@ -1976,10 +1986,11 @@ def equipment_dialog() -> None:
         if t and t not in _active_types and not (t in _seen or _seen.add(t))
     ]
     insp_types = st.multiselect(
-        "적용 점검 유형 (카테고리 기본값 자동 채움, 수정 가능)",
+        "적용 점검 유형",
         options=_active_types + _extra_types,
         key="eq_dlg_types",
         placeholder="이 장비에 적용 가능한 점검 유형을 선택",
+        help="카테고리 기본값이 자동으로 채워집니다. 필요 시 수정하세요.",
     )
 
     # 자동 생성 영역 (정보 표시용)
