@@ -229,6 +229,19 @@ def render() -> None:
     if sort_opt == "오래된순":
         rows = list(reversed(rows))
 
+    # 전체 펼치기 / 접기 (내용 열 일괄 토글)
+    _exp_col, _clp_col, _ = st.columns([1, 1, 4])
+    with _exp_col:
+        if st.button("전체 펼치기", key="def_expand_all", use_container_width=True):
+            for _r in rows:
+                st.session_state[f"def_expand_{_r.type}_{_r.raw_id}"] = True
+            st.rerun()
+    with _clp_col:
+        if st.button("전체 접기", key="def_collapse_all", use_container_width=True):
+            for _r in rows:
+                st.session_state[f"def_expand_{_r.type}_{_r.raw_id}"] = False
+            st.rerun()
+
     # 테이블
     st.markdown(_table_header(), unsafe_allow_html=True)
 
