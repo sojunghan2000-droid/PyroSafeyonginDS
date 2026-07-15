@@ -1955,7 +1955,7 @@ def equipment_dialog() -> None:
             new_spot_meta = (new_floor, new_room.strip(), new_x, new_y)
 
     serial = st.text_input(
-        "시리얼 번호 (자동 + 수정 가능)",
+        "시리얼 번호",
         value=auto_serial,
         key="eq_dlg_serial",
     )
