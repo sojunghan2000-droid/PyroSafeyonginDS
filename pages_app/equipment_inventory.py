@@ -588,39 +588,40 @@ def render() -> None:
                 key=f"eq_floor_fig_{floor_filter}",
             )
     else:
-        # 전체 층 — 전 층 미니맵 그리드 (층 이동은 상단 '층' 드롭다운으로 통일, v1.7)
-        st.markdown(
-            "<div style='margin-top:0.3rem; color:#475569; font-size:0.85rem;'>"
-            "🗺️ 전 층 도면 · 장비 위치 (🟢 양호 · 🔴 불량 · 🔵 점검도래) — "
-            "상단 <b>층</b> 드롭다운에서 특정 층을 고르면 상세로 이동합니다</div>",
-            unsafe_allow_html=True,
-        )
-        # 관리자(위치 마스터) 화면처럼 전 층을 건물 순서로 2행 4열 그리드
-        extra = [f for f in sorted({e.floor for e in eq}) if f not in SPOT_FLOORS]
-        eq_floors = SPOT_FLOORS + extra
-        n_cols = 4
-        for row_start in range(0, len(eq_floors), n_cols):
-            row_floors = eq_floors[row_start:row_start + n_cols]
-            grid_cols = st.columns(n_cols)
-            for gcol, fl in zip(grid_cols, row_floors):
-                with gcol:
-                    fl_eq = [e for e in rows if e.floor == fl]
-                    st.markdown(
-                        f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
-                        f"margin-bottom:0.1rem;'>{fl} "
-                        f"<span style='color:#94A3B8; font-weight:500;'>"
-                        f"({len(fl_eq)})</span></div>",
-                        unsafe_allow_html=True,
-                    )
-                    mini = _equipment_floor_fig(fl, fl_eq, height=170)
-                    if mini is not None:
-                        st.plotly_chart(
-                            mini, use_container_width=True,
-                            config={"displayModeBar": False, "staticPlot": True},
-                            key=f"eq_mini_{fl}",
+        # 전체 층 — 전 층 미니맵 그리드 (접기/펼치기, v1.8)
+        with st.expander("🗺️ 전 층 도면 · 장비 위치", expanded=True):
+            st.markdown(
+                "<div style='color:#475569; font-size:0.85rem; margin-bottom:0.3rem;'>"
+                "🟢 양호 · 🔴 불량 · 🔵 점검도래 — 상단 <b>층</b> 드롭다운에서 "
+                "특정 층을 고르면 상세로 이동합니다</div>",
+                unsafe_allow_html=True,
+            )
+            # 관리자(위치 마스터) 화면처럼 전 층을 건물 순서로 2행 4열 그리드
+            extra = [f for f in sorted({e.floor for e in eq}) if f not in SPOT_FLOORS]
+            eq_floors = SPOT_FLOORS + extra
+            n_cols = 4
+            for row_start in range(0, len(eq_floors), n_cols):
+                row_floors = eq_floors[row_start:row_start + n_cols]
+                grid_cols = st.columns(n_cols)
+                for gcol, fl in zip(grid_cols, row_floors):
+                    with gcol:
+                        fl_eq = [e for e in rows if e.floor == fl]
+                        st.markdown(
+                            f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
+                            f"margin-bottom:0.1rem;'>{fl} "
+                            f"<span style='color:#94A3B8; font-weight:500;'>"
+                            f"({len(fl_eq)})</span></div>",
+                            unsafe_allow_html=True,
                         )
-                    else:
-                        st.caption("(도면 없음)")
+                        mini = _equipment_floor_fig(fl, fl_eq, height=170)
+                        if mini is not None:
+                            st.plotly_chart(
+                                mini, use_container_width=True,
+                                config={"displayModeBar": False, "staticPlot": True},
+                                key=f"eq_mini_{fl}",
+                            )
+                        else:
+                            st.caption("(도면 없음)")
 
     # ---------- 테이블 (st.columns 기반) ----------
     # 헤더 — 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버 (위젯)
