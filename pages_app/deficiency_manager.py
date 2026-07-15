@@ -370,16 +370,18 @@ def render() -> None:
 
         # 펼침 시 — 점검 의견(좌) · 통보서 번호(우) 좌우 분리
         if st.session_state.get(f"def_expand_{r.type}_{r.raw_id}", False):
-            _notice_block = ""
-            if r.notice_no and r.notice_no != "-":
-                _notice_block = (
-                    "<div style='flex:0 0 auto; padding-left:1.2rem; "
-                    "border-left:1px solid #E2E8F0; min-width:9rem;'>"
-                    "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
-                    "통보서 번호</span><br>"
-                    f"<span style='color:#1D4ED8; font-weight:600;'>{r.notice_no}</span>"
-                    "</div>"
-                )
+            _has_notice = bool(r.notice_no and r.notice_no != "-")
+            _notice_val = (
+                f"<span style='color:#1D4ED8; font-weight:600;'>{r.notice_no}</span>"
+                if _has_notice else
+                "<span style='color:#94A3B8;'>해당 없음</span>"
+            )
+            _notice_block = (
+                "<div style='flex:0 0 auto; padding-left:1.2rem; "
+                "border-left:1px solid #E2E8F0; min-width:9rem;'>"
+                "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
+                f"통보서 번호</span><br>{_notice_val}</div>"
+            )
             st.markdown(
                 "<div style='background:#F8FAFC; border:1px solid #E2E8F0; "
                 "border-radius:8px; padding:0.6rem 0.9rem; margin:0.1rem 0 0.5rem; "
