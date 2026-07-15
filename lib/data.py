@@ -247,6 +247,7 @@ class InspectionRound:
     cancel_reason: str = ""
     cancelled_at: date | None = None
     cancelled_by: str = ""
+    archived: bool = False
 
 
 @dataclass
@@ -430,6 +431,7 @@ def _row_to_round(r: dict) -> InspectionRound:
         cancel_reason=r.get("cancel_reason") or "",
         cancelled_at=_d(r.get("cancelled_at")),
         cancelled_by=r.get("cancelled_by") or "",
+        archived=bool(r.get("archived", False)),
     )
 
 
@@ -907,6 +909,33 @@ def cancel_round(round_id: str, reason: str, by: str) -> bool:
         }).eq("round_id", round_id).execute()
     except Exception:
         return False
+    _round_rows.clear()
+    return True
+
+
+def archive_round(round_id: str) -> bool:
+    """취소된 회차를 목록에서 숨김(아카이브). 취소 상태만 가능. 기록은 보존."""
+    r = get_round(round_id)
+    if not r or not r.cancelled or r.archived:
+        return False
+    try:
+        _db().table("inspection_rounds").update(
+            {"archived": True}
+        ).eq("round_id", round_id).execute()
+    except Exception:
+        return False
+    _round_rows.clear()
+    return True
+
+
+def restore_round(round_id: str) -> bool:
+    """숨긴 회차를 목록에 다시 표시(복구)."""
+    r = get_round(round_id)
+    if not r or not r.archived:
+        return False
+    _db().table("inspection_rounds").update(
+        {"archived": False}
+    ).eq("round_id", round_id).execute()
     _round_rows.clear()
     return True
 

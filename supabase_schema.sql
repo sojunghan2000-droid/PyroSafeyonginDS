@@ -119,7 +119,8 @@ alter table public.inspection_rounds
   add column if not exists cancelled     boolean     not null default false,
   add column if not exists cancel_reason text,
   add column if not exists cancelled_at  timestamptz,
-  add column if not exists cancelled_by  text;
+  add column if not exists cancelled_by  text,
+  add column if not exists archived      boolean     not null default false;  -- v1.8: 취소 회차 숨김
 
 -- 8) 점검 유형 명칭 변경 함수 (v1.8) — 이름 변경 시 참조를 원자적으로 연쇄 갱신
 create or replace function public.rename_inspection_type(old_name text, new_name text)
