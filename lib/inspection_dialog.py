@@ -599,6 +599,143 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     return None
 
 
+def _location_map_picker(key_prefix: str, highlight_category: str | None = None):
+    """회차 컨텍스트 없는 범용 위치 픽커. 도면에서 장비/빈 spot 1건 선택.
+    반환: {"floor","zone","spot_id","label"} 또는 None(미선택).
+    highlight_category와 category가 일치하는 장비를 파란색 강조."""
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import (
+        control_toggle, legend_html, plotly_config, lock_overlay_css,
+    )
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+
+    all_eq = data.load_equipment()
+    all_spots = data.load_spots()
+    floors = sorted({e.floor for e in all_eq if e.floor} | {s.floor for s in all_spots})
+    if not floors:
+        st.info("도면을 표시할 수 있는 층이 없습니다.")
+        return st.session_state.get(f"{key_prefix}_picked")
+
+    floor = st.selectbox("층", options=floors, key=f"{key_prefix}_floor")
+
+    cc, lc = st.columns([1.2, 5])
+    with cc:
+        locked = control_toggle(f"{key_prefix}_lock", default_locked=True)
+    with lc:
+        st.markdown(legend_html([
+            ("#2563EB", "분류 일치 장비"),
+            ("#94A3B8", "그 외 장비 · ◇ 빈 위치"),
+        ]), unsafe_allow_html=True)
+
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.warning(f"{floor} 도면 이미지가 없습니다.")
+        return st.session_state.get(f"{key_prefix}_picked")
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    spots = {s.spot_id: s for s in data.load_spots(floor)}
+    floor_eq = [e for e in all_eq if e.floor == floor and e.spot_id in spots]
+    match_xs, match_ys, match_txt, match_cd = [], [], [], []
+    nomat_xs, nomat_ys, nomat_txt, nomat_cd = [], [], [], []
+    for e in floor_eq:
+        sp = spots.get(e.spot_id)
+        if not sp:
+            continue
+        x = sp.x_pct / 100 * FIG_W
+        y = FIG_H - sp.y_pct / 100 * FIG_H
+        txt = e.equipment_id.split("-")[-1]
+        cd = ("eq", e.spot_id, e.zone, e.equipment_name, e.equipment_id)
+        if highlight_category and e.category == highlight_category:
+            match_xs.append(x); match_ys.append(y)
+            match_txt.append(txt); match_cd.append(cd)
+        else:
+            nomat_xs.append(x); nomat_ys.append(y)
+            nomat_txt.append(txt); nomat_cd.append(cd)
+    if nomat_xs:
+        fig.add_trace(go.Scatter(
+            x=nomat_xs, y=nomat_ys, mode="markers+text",
+            text=nomat_txt, textposition="top center",
+            textfont=dict(size=10, color="#475569"),
+            marker=dict(size=16, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5)),
+            customdata=nomat_cd,
+            hovertemplate=("<b>%{customdata[3]}</b><br>"
+                           "%{customdata[2]} · %{customdata[4]}<extra></extra>"),
+            showlegend=False,
+        ))
+    if match_xs:
+        fig.add_trace(go.Scatter(
+            x=match_xs, y=match_ys, mode="markers+text",
+            text=match_txt, textposition="top center",
+            textfont=dict(size=10, color="#0F172A"),
+            marker=dict(size=18, color="#2563EB",
+                        line=dict(color="#FFFFFF", width=2)),
+            customdata=match_cd,
+            hovertemplate=("<b>%{customdata[3]}</b> (분류 일치)<br>"
+                           "%{customdata[2]} · %{customdata[4]}<extra></extra>"),
+            showlegend=False,
+        ))
+
+    used = {e.spot_id for e in all_eq if e.spot_id and e.floor == floor}
+    empty = [s for s in spots.values() if s.spot_id not in used]
+    if empty:
+        xs, ys, cd = [], [], []
+        for sp in empty:
+            xs.append(sp.x_pct / 100 * FIG_W)
+            ys.append(FIG_H - sp.y_pct / 100 * FIG_H)
+            cd.append(("spot", sp.spot_id, sp.room_name, sp.room_name, sp.spot_id))
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers",
+            marker=dict(size=14, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5), symbol="diamond"),
+            customdata=cd,
+            hovertemplate=("<b>%{customdata[2]}</b> (빈 위치)<br>"
+                           "%{customdata[1]}<extra></extra>"),
+            showlegend=False,
+        ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="#F8FAFC", height=480,
+        dragmode="pan", showlegend=False,
+        clickmode="event+select",
+        uirevision=f"{key_prefix}_{floor}",
+    )
+    if locked:
+        lock_overlay_css()
+    event = st.plotly_chart(
+        fig, use_container_width=True, config=plotly_config(),
+        on_select="rerun", selection_mode=["points"],
+        key=f"{key_prefix}_chart_{floor}",
+    )
+
+    picked_key = f"{key_prefix}_picked"
+    if (not locked and event and getattr(event, "selection", None)
+            and getattr(event.selection, "points", None)):
+        pt = event.selection.points[-1]
+        cd = pt.get("customdata")
+        if cd:
+            _kind, spot_id, zone, name, _ident = cd
+            st.session_state[picked_key] = {
+                "floor": floor, "zone": zone, "spot_id": spot_id,
+                "label": f"{floor} / {zone} · {name}",
+            }
+    return st.session_state.get(picked_key)
+
+
 @st.dialog("회차에 Task 추가", width="large")
 def add_task_to_round_dialog(round_id: str) -> None:
     """v1.5 자유 점검 회차에 Task 1건 동적 추가.
