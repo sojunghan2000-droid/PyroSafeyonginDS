@@ -115,7 +115,7 @@ def _table_header() -> str:
         "<div style='display:grid; "
         f"grid-template-columns: {' '.join(f'{r}fr' for r in COL_RATIOS)}; "
         "gap: 0.4rem; padding: 0.6rem 0.4rem; "
-        "color:#64748B; font-size:0.78rem; font-weight:600; "
+        "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center; "
         "border-bottom:1px solid #E2E8F0;'>"
         "<div>점검 ID</div>"
         "<div>작업 ID</div>"
