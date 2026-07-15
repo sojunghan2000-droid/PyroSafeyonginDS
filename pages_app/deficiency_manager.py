@@ -111,10 +111,9 @@ def _type_badge(t: str) -> str:
 
 
 _HINT_NOTICE_MD = (
-    "**통보서 (불량 발급)** — 점검 결과 **'불량'** 판정 시 자동 발급되는 "
-    "**별지6 조치 결과 통보서** 번호입니다 (형식 `YYYY-MM-DD-NN`).\n\n"
-    "`조치 대기`는 이 화면에서 후속 조치 후 완료 처리하며, "
-    "**양호·오동작은 발급되지 않아 `-`** 로 표시됩니다."
+    "**불량 여부** — 점검 결과가 불량이면 **불량**, 양호면 **양호**로 표시합니다.\n\n"
+    "불량 시 **별지6 조치 결과 통보서**가 자동 발급되며, "
+    "**통보서 번호는 행을 펼치면**(오른쪽 ▸) 점검 의견과 함께 표시됩니다."
 )
 _DEF_HDR_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
 
@@ -150,7 +149,7 @@ def _render_table_header() -> None:
         with cols[7]:
             _lc, _pc = st.columns([1, 0.4], vertical_alignment="center")
             _lc.markdown(
-                f"<div style='{_DEF_HDR_CSS}'>통보서<br>(불량 발급)</div>",
+                f"<div style='{_DEF_HDR_CSS}'>불량 여부</div>",
                 unsafe_allow_html=True,
             )
             with _pc:
@@ -321,11 +320,21 @@ def render() -> None:
                 st.markdown(f"<span style='color:#334155;'>{r.status}</span>",
                             unsafe_allow_html=True)
         with cols[7]:
-            no_color = "#1D4ED8" if r.notice_no != "-" else "#94A3B8"
-            st.markdown(
-                f"<span style='color:{no_color}; font-weight:600;'>{r.notice_no}</span>",
-                unsafe_allow_html=True,
-            )
+            # 불량 여부 (통보서 번호는 펼침 영역으로 이동) — 양호(content=="양호") 외 불량
+            if r.content == "양호":
+                st.markdown(
+                    "<div style='text-align:center;'>"
+                    "<span style='color:#16A34A; font-weight:600;'>양호</span></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    "<div style='text-align:center;'>"
+                    "<span style='background:#FEE2E2; color:#B91C1C; "
+                    "padding:0.1rem 0.5rem; border-radius:6px; "
+                    "font-weight:600; font-size:0.82rem;'>불량</span></div>",
+                    unsafe_allow_html=True,
+                )
         with cols[8]:
             # 조치 대기 row에 "조치 입력 →" — 지적사항 / 오동작 분기
             if r.status == "조치 대기" and r.type == "지적사항":
@@ -351,14 +360,20 @@ def render() -> None:
                 st.session_state[_exp_key] = not _expanded
                 st.rerun()
 
-        # 펼침 시 — 내용 전체 폭으로 (줄바꿈)
+        # 펼침 시 — 점검 의견 + 통보서 번호(있을 때) 전체 폭으로 (줄바꿈)
         if st.session_state.get(f"def_expand_{r.type}_{r.raw_id}", False):
+            _notice_line = (
+                "<br><span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
+                "통보서 번호</span> "
+                f"<span style='color:#1D4ED8; font-weight:600;'>{r.notice_no}</span>"
+                if r.notice_no and r.notice_no != "-" else ""
+            )
             st.markdown(
                 "<div style='background:#F8FAFC; border:1px solid #E2E8F0; "
                 "border-radius:8px; padding:0.6rem 0.9rem; margin:0.1rem 0 0.5rem; "
                 "color:#0F172A; font-size:0.9rem; line-height:1.7; "
                 "white-space:pre-wrap; word-break:break-word;'>"
                 "<span style='color:#64748B; font-size:0.78rem; font-weight:600;'>"
-                f"점검 의견</span><br>{r.content}</div>",
+                f"점검 의견</span><br>{r.content}{_notice_line}</div>",
                 unsafe_allow_html=True,
             )
