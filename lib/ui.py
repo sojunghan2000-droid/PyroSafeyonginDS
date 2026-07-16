@@ -757,7 +757,7 @@ def _help_dialog() -> None:
                           placeholder="예: 오동작, QR, 별지5, 위치 정정")
     if query.strip():
         results = _faq_search(query, _HELP_FAQ_FLAT)
-        st.caption(f"'{query}' 검색 결과 {len(results)}건")
+        st.caption(f"'{query.strip()}' 검색 결과 {len(results)}건")
         if not results:
             st.info("일치하는 항목이 없습니다. 다른 키워드로 검색해 보세요.")
         for _score, cat, q, a in results:
@@ -779,6 +779,7 @@ def _help_dialog() -> None:
 
 def _render_help_button() -> None:
     if st.button("?", key="help_btn", help="도움말 / FAQ"):
+        st.session_state.pop("help_search", None)  # 재오픈 시 이전 검색어 초기화 → 카테고리 개요부터
         _help_dialog()
 
 
