@@ -550,7 +550,9 @@ def render() -> None:
             key="tasks_view",
         )
     with filter_col:
-        type_options = ["전체 유형"] + sorted({r.task_type for r in rounds})
+        # 숨김(archived) 회차의 유형은 일반 목록에 안 뜨므로 필터 옵션에서도 제외
+        type_options = ["전체 유형"] + sorted(
+            {r.task_type for r in rounds if not r.archived})
         type_filter = st.selectbox(
             "점검 유형",
             type_options,
