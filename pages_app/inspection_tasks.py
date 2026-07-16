@@ -626,10 +626,19 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
         with cols[1]:
-            st.markdown(
-                f"<div style='text-align:center; color:#0F172A;'>{r.task_type}</div>",
-                unsafe_allow_html=True,
-            )
+            if r.task_type == data.MAL_ROUND_TYPE:
+                st.markdown(
+                    "<div style='text-align:center;'>"
+                    "<span style='background:#FEE2E2; color:#DC2626; "
+                    "padding:0.15rem 0.5rem; border-radius:999px; "
+                    "font-size:0.78rem; font-weight:700;'>오동작 접수</span></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div style='text-align:center; color:#0F172A;'>{r.task_type}</div>",
+                    unsafe_allow_html=True,
+                )
         with cols[2]:
             assignee_label = r.assignee or "미지정"
             assignee_style = ("color:#94A3B8; font-style:italic;"
