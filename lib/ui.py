@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import date
+import difflib
+import re
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -553,6 +555,27 @@ def render_topbar(_active_page: str | None = None) -> None:
     _render_help_button()
     _render_notify_button()
     _render_avatar_menu()
+
+
+def _faq_search(query: str, items: list[tuple[str, str, str]]
+                ) -> list[tuple[float, str, str, str]]:
+    """query와 각 (cat, q, a)의 유사도 점수를 계산해 임계 이상만 내림차순 반환."""
+    q = query.strip().lower()
+    if not q:
+        return []
+    q_tokens = set(re.findall(r"[0-9a-z가-힣]+", q))
+    scored: list[tuple[float, str, str, str]] = []
+    for cat, question, answer in items:
+        ql, hay = question.lower(), f"{question} {answer}".lower()
+        sub = 1.0 if q in ql else (0.6 if q in hay else 0.0)
+        h_tokens = set(re.findall(r"[0-9a-z가-힣]+", hay))
+        overlap = (len(q_tokens & h_tokens) / len(q_tokens)) if q_tokens else 0.0
+        seq = difflib.SequenceMatcher(None, q, ql).ratio()
+        score = max(sub, overlap, 0.5 * overlap + 0.5 * seq)
+        if score >= 0.3:
+            scored.append((score, cat, question, answer))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored
 
 
 # ---- FAQ 콘텐츠 ----
