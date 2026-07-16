@@ -753,15 +753,28 @@ _HELP_FAQ_FLAT: list[tuple[str, str, str]] = [
 
 @st.dialog("도움말 — PyroSafe 사용 가이드", width="large")
 def _help_dialog() -> None:
-    st.markdown(
-        "<div style='color:#64748B; font-size:0.88rem; margin-bottom:0.6rem;'>"
-        "자주 묻는 질문 18개. 추가 안내는 안전 관리자에게 문의하세요."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    for q, a in _HELP_FAQ:
-        with st.expander(q):
-            st.markdown(a)
+    query = st.text_input("검색", key="help_search",
+                          placeholder="예: 오동작, QR, 별지5, 위치 정정")
+    if query.strip():
+        results = _faq_search(query, _HELP_FAQ_FLAT)
+        st.caption(f"'{query}' 검색 결과 {len(results)}건")
+        if not results:
+            st.info("일치하는 항목이 없습니다. 다른 키워드로 검색해 보세요.")
+        for _score, cat, q, a in results:
+            with st.expander(f"[{cat}] {q}"):
+                st.markdown(a)
+    else:
+        st.caption(
+            f"자주 묻는 질문 {len(_HELP_FAQ_FLAT)}개 · 카테고리별. "
+            "상단 검색으로 바로 찾을 수 있습니다."
+        )
+        for cat, items in _HELP_FAQ_BY_CAT:
+            if not items:
+                continue
+            st.markdown(f"**{cat}**")
+            for q, a in items:
+                with st.expander(q):
+                    st.markdown(a)
 
 
 def _render_help_button() -> None:
