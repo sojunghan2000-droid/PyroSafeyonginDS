@@ -521,7 +521,8 @@ def render() -> None:
         st.success(f"신규 Task {added_tsk} 가 회차에 추가되었습니다.")
 
     # KPI — 회차 단위 + Task 단위 혼합 (취소·숨김 회차 제외)
-    active_rounds = [r for r in rounds if not r.cancelled]
+    active_rounds = [r for r in rounds
+                     if not r.cancelled and r.task_type != data.MAL_ROUND_TYPE]
     cancelled_cnt = sum(1 for r in rounds if r.cancelled and not r.archived)
     total_rounds = len(active_rounds)
     overdue_rounds = sum(1 for r in active_rounds if r.status == "Overdue")
