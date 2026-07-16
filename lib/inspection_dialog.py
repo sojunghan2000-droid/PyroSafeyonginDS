@@ -1672,18 +1672,31 @@ def malfunction_dialog() -> None:
             return
 
         _loc = st.session_state.get("mal_dlg_loc_picked") or {}
+        # 오동작 접수 회차 + Task 자동 발행 — 직접 등록분에 점검/작업 ID 부여
+        _round_id = next_round_id()
+        add_round(InspectionRound(
+            round_id=_round_id, task_type=data.MAL_ROUND_TYPE,
+            assignee=reporter, due_date=occurred, status="Completed",
+            note=f"오동작 접수 · {category}",
+        ))
+        _task_id = next_task_id()
+        _eq_label = (f"{_loc['floor']}/{_loc['zone']} · {category}"
+                     if _loc else f"오동작 · {category}")
+        add_task(InspectionTask(
+            task_id=_task_id, equipment_label=_eq_label,
+            task_type=data.MAL_ROUND_TYPE, assignee=reporter,
+            due_date=occurred, status="Completed",
+            floor=_loc.get("floor", ""), zone=_loc.get("zone", ""),
+            round_id=_round_id,
+        ))
         new_id = data.next_malfunction_id()
         add_malfunction(Malfunction(
-            malfunction_id=new_id,
-            category=category,  # type: ignore[arg-type]
-            occurred_on=occurred,
-            detail=detail.strip(),
-            action="",
-            confirmer=reporter,
+            malfunction_id=new_id, category=category, occurred_on=occurred,
+            detail=detail.strip(), action="", confirmer=reporter,
             action_done=False,
-            floor=_loc.get("floor", ""),
-            zone=_loc.get("zone", ""),
+            floor=_loc.get("floor", ""), zone=_loc.get("zone", ""),
             spot_id=_loc.get("spot_id"),
+            task_id=_task_id,
         ))
         st.session_state.pop("mal_dlg_loc_picked", None)
         st.session_state["just_submitted_malfunction"] = True

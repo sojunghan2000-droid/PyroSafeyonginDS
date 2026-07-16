@@ -28,6 +28,8 @@ TaskStatus = Literal["Scheduled", "In Progress", "Overdue", "Completed"]
 InspectionType = Literal["임시소방시설", "피난로 등", "화기취급감독"]
 ResolutionStatus = Literal["완료", "불가"]
 
+MAL_ROUND_TYPE = "오동작 접수"  # 직접 등록 오동작에 발행하는 회차/Task 유형 (정기 점검과 구분)
+
 ACTION_PHOTO_BUCKET = "action-photos"
 
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
