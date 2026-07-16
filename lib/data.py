@@ -1221,7 +1221,7 @@ def notice_action_rate() -> float | None:
 
 
 def task_kpis() -> dict:
-    tasks = load_tasks()
+    tasks = [t for t in load_tasks() if t.task_type != MAL_ROUND_TYPE]
     return {
         "total": len(tasks),
         "overdue": sum(1 for t in tasks if t.status == "Overdue"),
@@ -1231,7 +1231,7 @@ def task_kpis() -> dict:
 
 
 def field_kpis() -> dict:
-    tasks = load_tasks()
+    tasks = [t for t in load_tasks() if t.task_type != MAL_ROUND_TYPE]
     defs = load_deficiencies()
     return {
         "inspections_today": sum(1 for t in tasks if t.due_date == TODAY),
