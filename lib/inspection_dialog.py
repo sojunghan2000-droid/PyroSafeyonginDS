@@ -736,6 +736,96 @@ def _location_map_picker(key_prefix: str, highlight_category: str | None = None)
     return st.session_state.get(picked_key)
 
 
+def _spot_preview_map(sel_spot) -> None:
+    """'기존 위치 선택'에서 고른 spot 위치를 도면 위에 보여주는 읽기전용 미리보기.
+
+    선택 spot = 파란 별(★), 같은 층의 다른 spot = 옅은 회색 ◇, 기존 장비 = 옅은 회색 ●.
+    클릭·선택·세션상태 변경 없음(정적).
+    """
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import plotly_config
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+
+    floor = sel_spot.floor
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.warning(f"{floor} 도면 이미지가 없습니다.")
+        return
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    spots = data.load_spots(floor)
+    floor_eq = [e for e in data.load_equipment() if e.floor == floor and e.spot_id]
+    spot_by_id = {s.spot_id: s for s in spots}
+
+    def _xy(x_pct, y_pct):
+        return x_pct / 100 * FIG_W, FIG_H - y_pct / 100 * FIG_H
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    # 맥락 1: 같은 층의 다른 spot (선택 제외) — 옅은 회색 다이아
+    ox, oy, ot = [], [], []
+    for s in spots:
+        if s.spot_id == sel_spot.spot_id:
+            continue
+        x, y = _xy(s.x_pct, s.y_pct)
+        ox.append(x); oy.append(y); ot.append(f"{s.room_name} ({s.spot_id})")
+    if ox:
+        fig.add_trace(go.Scatter(
+            x=ox, y=oy, mode="markers", text=ot,
+            marker=dict(size=13, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5), symbol="diamond"),
+            hovertemplate="%{text}<extra></extra>", showlegend=False,
+        ))
+
+    # 맥락 2: 같은 층 기존 장비 — 옅은 회색 원
+    ex, ey, et = [], [], []
+    for e in floor_eq:
+        sp = spot_by_id.get(e.spot_id)
+        if not sp:
+            continue
+        x, y = _xy(sp.x_pct, sp.y_pct)
+        ex.append(x); ey.append(y); et.append(f"{e.equipment_name} ({e.equipment_id})")
+    if ex:
+        fig.add_trace(go.Scatter(
+            x=ex, y=ey, mode="markers", text=et,
+            marker=dict(size=11, color="#CBD5E1",
+                        line=dict(color="#FFFFFF", width=1), symbol="circle"),
+            hovertemplate="%{text}<extra></extra>", showlegend=False,
+        ))
+
+    # 선택 spot — 파란 별 강조
+    sx, sy = _xy(sel_spot.x_pct, sel_spot.y_pct)
+    fig.add_trace(go.Scatter(
+        x=[sx], y=[sy], mode="markers",
+        text=[f"{sel_spot.room_name} ({sel_spot.spot_id})"],
+        marker=dict(size=24, color="#2563EB",
+                    line=dict(color="#FFFFFF", width=2), symbol="star"),
+        hovertemplate="<b>%{text}</b><extra></extra>", showlegend=False,
+    ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="#F8FAFC", height=360,
+        dragmode=False, showlegend=False,
+        uirevision=f"spot_preview_{floor}",
+    )
+    st.plotly_chart(
+        fig, use_container_width=True, config=plotly_config(),
+        key=f"spot_preview_{sel_spot.spot_id}",
+    )
+
+
 @st.dialog("회차에 Task 추가", width="large")
 def add_task_to_round_dialog(round_id: str) -> None:
     """v1.5 자유 점검 회차에 Task 1건 동적 추가.
@@ -1938,6 +2028,9 @@ def equipment_dialog() -> None:
                     "이 층에 정의된 위치가 없습니다. '신규 위치 만들기'로 등록하세요.</div>",
                     unsafe_allow_html=True,
                 )
+        if sel_spot is not None:
+            with st.expander("🗺️ 도면에서 위치 확인", expanded=False):
+                _spot_preview_map(sel_spot)
     else:
         # 신규 위치 즉석 생성 — 도면 클릭으로 좌표 픽업 + 등록과 동시에 spot 정식 생성
         nc1, nc2 = st.columns([1, 2])
