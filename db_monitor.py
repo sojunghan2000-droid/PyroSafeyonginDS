@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 
 import pandas as pd
+import plotly.express as px
 import psycopg2  # noqa: F401 — 배포/런타임 커넥션에 사용(Task 6)
 import streamlit as st
 
@@ -93,6 +94,49 @@ def render_overview(conn) -> None:
         show = sub[["table", "rows", "last_created"]].rename(
             columns={"table": "테이블", "rows": "행수", "last_created": "최근 생성"})
         st.dataframe(show, use_container_width=True, hide_index=True)
+
+
+def fetch_created_at_tables(conn) -> list[str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "select table_name from information_schema.columns "
+            "where table_schema='public' and column_name='created_at' "
+            "and data_type like 'timestamp%' order by table_name"
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+def fetch_daily(conn, table: str, days):
+    allowed = set(fetch_created_at_tables(conn))
+    if table not in allowed:
+        raise ValueError(f"table not allowed: {table}")
+    sql = f'select date(created_at) d, count(*) c from public."{table}"'
+    params = []
+    if days:
+        sql += " where created_at >= now() - (%s || ' days')::interval"
+        params.append(str(days))
+    sql += " group by 1 order by 1"
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        data = cur.fetchall()
+    return pd.DataFrame(data, columns=["d", "c"])
+
+
+def render_trends(conn) -> None:
+    st.subheader("추이")
+    tabs = fetch_created_at_tables(conn)
+    defaults = [t for t in ["deficiencies", "inspection_tasks", "malfunctions"] if t in tabs]
+    col1, col2 = st.columns([2, 1])
+    table = col1.selectbox("테이블", tabs, index=(tabs.index(defaults[0]) if defaults else 0))
+    period = col2.selectbox("기간", ["최근 30일", "최근 90일", "전체"], index=2)
+    days = {"최근 30일": 30, "최근 90일": 90, "전체": None}[period]
+    df = fetch_daily(conn, table, days)
+    if df.empty:
+        st.info("데이터 없음")
+        return
+    fig = px.bar(df, x="d", y="c", labels={"d": "일자", "c": "건수"})
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"총 {int(df['c'].sum()):,}건")
 
 
 def main() -> None:

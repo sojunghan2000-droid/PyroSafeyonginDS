@@ -40,3 +40,15 @@ def test_fetch_counts_missing_created_at(conn):
     rows = db_monitor.fetch_counts(conn, ["zones"])
     assert rows[0]["last_created"] is None
     assert rows[0]["group"] == "FIRE-PASS"
+
+
+def test_fetch_created_at_tables(conn):
+    tabs = db_monitor.fetch_created_at_tables(conn)
+    assert "deficiencies" in tabs
+    assert "zones" not in tabs          # created_at 없음
+
+
+def test_fetch_daily_sums_to_rowcount(conn):
+    df = db_monitor.fetch_daily(conn, "deficiencies", None)
+    assert list(df.columns) == ["d", "c"]
+    assert int(df["c"].sum()) == 17     # deficiencies 총 17건(이관 검증값)
