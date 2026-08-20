@@ -93,7 +93,7 @@ def render_overview(conn) -> None:
         st.markdown(f"**{grp}** ({len(sub)}개)")
         show = sub[["table", "rows", "last_created"]].rename(
             columns={"table": "테이블", "rows": "행수", "last_created": "최근 생성"})
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, width='stretch', hide_index=True)
 
 
 def fetch_created_at_tables(conn) -> list[str]:
@@ -135,7 +135,7 @@ def render_trends(conn) -> None:
         st.info("데이터 없음")
         return
     fig = px.bar(df, x="d", y="c", labels={"d": "일자", "c": "건수"})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     st.caption(f"총 {int(df['c'].sum()):,}건")
 
 
@@ -169,7 +169,7 @@ def render_browser(conn) -> None:
     df = fetch_rows(conn, table, limit)
     df = filter_df(df, q)
     st.caption(f"{len(df)}행 표시")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
 
 
 def fetch_storage(conn) -> list[dict]:
@@ -225,7 +225,7 @@ def render_ops(conn) -> None:
              "용량": _human_bytes(b["bytes"])}
             for b in buckets
         ]),
-        use_container_width=True, hide_index=True,
+        width='stretch', hide_index=True,
     )
     st.markdown("**Auth**")
     total, recent = fetch_auth(conn, 20)
@@ -233,14 +233,62 @@ def render_ops(conn) -> None:
     st.dataframe(
         pd.DataFrame(recent).rename(
             columns={"email": "이메일", "last_sign_in": "최근 로그인", "role": "역할"}),
-        use_container_width=True, hide_index=True,
+        width='stretch', hide_index=True,
     )
+
+
+@st.cache_resource
+def get_conn():
+    return psycopg2.connect(**db_conn_params())
+
+
+def _password_gate() -> bool:
+    if st.session_state.get("monitor_authed"):
+        return True
+    st.title("DB 모니터")
+    pw = st.text_input("비밀번호", type="password")
+    if st.button("접속"):
+        if verify_password(pw, st.secrets["monitor"]["password"]):
+            st.session_state["monitor_authed"] = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    return False
 
 
 def main() -> None:
     st.set_page_config(page_title="DB 모니터", layout="wide")
+    if not _password_gate():
+        return
+
+    with st.sidebar:
+        st.caption("대상 프로젝트")
+        st.code("ivpzfrvboazpbcejpqwc\nap-south-1", language=None)
+        if st.button("새로고침"):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.rerun()
+        if st.button("로그아웃"):
+            st.session_state.pop("monitor_authed", None)
+            st.rerun()
+
+    try:
+        conn = get_conn()
+    except Exception as e:  # noqa: BLE001
+        st.error("DB 연결 실패 — secrets 확인")
+        st.exception(e)
+        return
+
     st.title("DB 모니터")
-    st.info("구현 예정")
+    t1, t2, t3, t4 = st.tabs(["개요", "추이", "브라우저", "운영"])
+    with t1:
+        render_overview(conn)
+    with t2:
+        render_trends(conn)
+    with t3:
+        render_browser(conn)
+    with t4:
+        render_ops(conn)
 
 
 if __name__ == "__main__":
