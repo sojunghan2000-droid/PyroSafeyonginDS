@@ -139,6 +139,39 @@ def render_trends(conn) -> None:
     st.caption(f"총 {int(df['c'].sum()):,}건")
 
 
+def fetch_rows(conn, table: str, limit: int):
+    allowed = set(fetch_tables(conn))
+    if table not in allowed:
+        raise ValueError(f"table not allowed: {table}")
+    order = " order by created_at desc nulls last" if _has_created_at(conn, table) else ""
+    with conn.cursor() as cur:
+        cur.execute(f'select * from public."{table}"{order} limit %s', (int(limit),))
+        cols = [d[0] for d in cur.description]
+        data = cur.fetchall()
+    return pd.DataFrame(data, columns=cols)
+
+
+def filter_df(df, query: str):
+    q = (query or "").strip().lower()
+    if not q:
+        return df
+    mask = df.astype(str).apply(lambda col: col.str.lower().str.contains(q, na=False))
+    return df[mask.any(axis=1)]
+
+
+def render_browser(conn) -> None:
+    st.subheader("브라우저")
+    tables = fetch_tables(conn)
+    col1, col2 = st.columns([2, 1])
+    table = col1.selectbox("테이블", tables, key="browse_table")
+    limit = col2.slider("행 수", 10, 500, 100, step=10)
+    q = st.text_input("검색(전 컬럼 부분일치)")
+    df = fetch_rows(conn, table, limit)
+    df = filter_df(df, q)
+    st.caption(f"{len(df)}행 표시")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="DB 모니터", layout="wide")
     st.title("DB 모니터")

@@ -52,3 +52,22 @@ def test_fetch_daily_sums_to_rowcount(conn):
     df = db_monitor.fetch_daily(conn, "deficiencies", None)
     assert list(df.columns) == ["d", "c"]
     assert int(df["c"].sum()) == 17     # deficiencies 총 17건(이관 검증값)
+
+
+def test_fetch_rows_limit_and_columns(conn):
+    df = db_monitor.fetch_rows(conn, "equipment", 5)
+    assert len(df) == 5
+    assert "equipment_id" in df.columns
+
+
+def test_fetch_rows_rejects_unknown_table(conn):
+    import pytest
+    with pytest.raises(ValueError):
+        db_monitor.fetch_rows(conn, "no_such_table; drop table x", 5)
+
+
+def test_filter_df():
+    import pandas as pd
+    df = pd.DataFrame({"a": ["Apple", "banana"], "b": [1, 2]})
+    out = db_monitor.filter_df(df, "app")
+    assert len(out) == 1 and out.iloc[0]["a"] == "Apple"
