@@ -172,6 +172,71 @@ def render_browser(conn) -> None:
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def fetch_storage(conn) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("select id, public from storage.buckets order by id")
+        buckets = cur.fetchall()
+        cur.execute(
+            "select bucket_id, count(*), coalesce(sum((metadata->>'size')::bigint),0) "
+            "from storage.objects group by bucket_id"
+        )
+        stats = {r[0]: (r[1], int(r[2])) for r in cur.fetchall()}
+    out = []
+    for bid, pub in buckets:
+        objs, byts = stats.get(bid, (0, 0))
+        out.append({"bucket": bid, "public": pub, "objects": objs, "bytes": byts})
+    return out
+
+
+def fetch_auth(conn, limit: int):
+    with conn.cursor() as cur:
+        cur.execute("select count(*) from auth.users")
+        total = cur.fetchone()[0]
+        cur.execute(
+            "select email, last_sign_in_at, coalesce(raw_app_meta_data->>'role','') "
+            "from auth.users order by last_sign_in_at desc nulls last limit %s",
+            (int(limit),),
+        )
+        recent = [
+            {"email": r[0],
+             "last_sign_in": r[1].isoformat(sep=" ", timespec="minutes") if r[1] else None,
+             "role": r[2]}
+            for r in cur.fetchall()
+        ]
+    return total, recent
+
+
+def _human_bytes(n: int) -> str:
+    size = float(n)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024:
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def render_ops(conn) -> None:
+    st.subheader("운영")
+    st.markdown("**Storage**")
+    buckets = fetch_storage(conn)
+    st.dataframe(
+        pd.DataFrame([
+            {"버킷": b["bucket"], "공개": b["public"], "파일 수": b["objects"],
+             "용량": _human_bytes(b["bytes"])}
+            for b in buckets
+        ]),
+        use_container_width=True, hide_index=True,
+    )
+    st.markdown("**Auth**")
+    total, recent = fetch_auth(conn, 20)
+    st.metric("사용자 수", total)
+    st.dataframe(
+        pd.DataFrame(recent).rename(
+            columns={"email": "이메일", "last_sign_in": "최근 로그인", "role": "역할"}),
+        use_container_width=True, hide_index=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="DB 모니터", layout="wide")
     st.title("DB 모니터")

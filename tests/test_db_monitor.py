@@ -71,3 +71,18 @@ def test_filter_df():
     df = pd.DataFrame({"a": ["Apple", "banana"], "b": [1, 2]})
     out = db_monitor.filter_df(df, "app")
     assert len(out) == 1 and out.iloc[0]["a"] == "Apple"
+
+
+def test_fetch_storage(conn):
+    buckets = db_monitor.fetch_storage(conn)
+    names = {b["bucket"] for b in buckets}
+    assert "attachments" in names
+    att = next(b for b in buckets if b["bucket"] == "attachments")
+    assert att["objects"] >= 1
+    assert att["bytes"] >= 0
+
+
+def test_fetch_auth(conn):
+    total, recent = db_monitor.fetch_auth(conn, 10)
+    assert total >= 1
+    assert all("email" in r for r in recent)
