@@ -18,6 +18,7 @@ create table if not exists public.equipment (
   pixel_x        double precision not null default 0,
   pixel_y        double precision not null default 0,
   inspection_types jsonb not null default '[]'::jsonb,
+  active         boolean not null default true,
   created_at     timestamptz not null default now()
 );
 
@@ -56,6 +57,8 @@ create table if not exists public.deficiencies (
   defect_codes     text[] not null default '{}',     -- v1.5+: 불량 사유 코드 (multiselect)
   defect_other     text not null default '',         -- v1.5+: "기타" 선택 시 상세
   checklist_items  jsonb not null default '{}',      -- v1.7: 세부 항목별 상태 (OK/NG/NA)
+  photo_path            text,  -- 조치 전(발견 시) 사진 — 기존 action_photo_path와 분리
+  inspection_photo_path  text,  -- 결과 무관 점검사진 (양호 포함)
   created_at       timestamptz not null default now()
 );
 
