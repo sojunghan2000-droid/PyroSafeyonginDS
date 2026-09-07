@@ -1421,6 +1421,12 @@ def task_inspect_inline(task_id: str) -> None:
                 "사유 카탈로그·조치 사진을 첨부해 주세요."
             )
 
+    insp_photo = photo_input(
+        "점검사진 (선택)",
+        key=f"tsk_insp_photo_{task_id}",
+        help_text="점검 현장 사진(결과 무관, 1장). 모바일은 카메라 촬영 탭 이용.",
+    )
+
     st.markdown(
         "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
         "점검 결과</b>",
@@ -1637,6 +1643,13 @@ def task_inspect_inline(task_id: str) -> None:
         if photo_bytes:
             photo_path = data._upload_action_photo(new_def_id, photo_bytes)
 
+        insp_photo_bytes = insp_photo.getvalue() if insp_photo else None
+        insp_photo_path = None
+        if insp_photo_bytes:
+            insp_photo_path = data._upload_action_photo(
+                f"{new_def_id}-insp", insp_photo_bytes
+            )
+
         # issue 텍스트 — 사유 카탈로그가 있으면 사유 요약, 없으면 자유 입력
         if result == "불량" and matching_kind_for_codes:
             codes_display = list(defect_codes_selected)
@@ -1670,11 +1683,17 @@ def task_inspect_inline(task_id: str) -> None:
             action_done=action_immediate or result == "양호",
             action_at=inspect_date if (action_immediate or result == "양호") else None,
             action_note=action_note_now.strip() if action_immediate else "",
-            action_photo_path=photo_path,
+            # v1.9(260907): 발견 시 사진은 photo_path로 이동. 단, "현장에서 즉시 조치 완료"를
+            # 체크한 경우는 같은 사진이 조치 결과 사진이기도 하므로 action_photo_path에도 그대로
+            # 채워야 별지6(조치 결과 사진 컬럼)이 계속 사진을 보여준다. 즉시조치가 아니면 None으로
+            # 시작해, 나중에 [작업 조치 관리] record_deficiency_action이 조치 후 사진으로 채운다.
+            action_photo_path=(photo_path if action_immediate else None),
             submitter=inspector,
             defect_codes=defect_codes_selected,  # v1.6
             defect_other=defect_other_text.strip(),  # v1.6
             checklist_items=checklist_items,  # v1.7
+            photo_path=photo_path,                    # 발견 시(조치 전) 사진
+            inspection_photo_path=insp_photo_path,     # 결과 무관 점검사진
         ))
 
         # 장비 health_status 갱신 (있으면)

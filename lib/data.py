@@ -279,6 +279,10 @@ class Deficiency:
     defect_other: str = ""
     # v1.7: 세부 checklist 항목별 상태 — {"카테고리|항목" or "항목": "OK"|"NG"|"NA"}
     checklist_items: dict[str, str] = None  # type: ignore[assignment]
+    # v1.9(260907): 조치 전(발견 시) 사진 — action_photo_path(조치 후)와 분리
+    photo_path: str | None = None
+    # v1.9(260907): 점검 결과(양호/불량) 무관 점검사진
+    inspection_photo_path: str | None = None
 
     def __post_init__(self) -> None:
         if self.defect_codes is None:
@@ -457,6 +461,8 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         defect_codes=list(r.get("defect_codes") or []),  # v1.6
         defect_other=r.get("defect_other") or "",        # v1.6
         checklist_items=dict(r.get("checklist_items") or {}),  # v1.7
+        photo_path=r.get("photo_path"),
+        inspection_photo_path=r.get("inspection_photo_path"),
     )
 
 
@@ -1045,6 +1051,8 @@ def add_deficiency(d: Deficiency) -> None:
         "defect_codes": list(d.defect_codes or []),  # v1.6
         "defect_other": d.defect_other or "",        # v1.6
         "checklist_items": dict(d.checklist_items or {}),  # v1.7
+        "photo_path": d.photo_path,
+        "inspection_photo_path": d.inspection_photo_path,
     }).execute()
     _deficiency_rows.clear()
 
