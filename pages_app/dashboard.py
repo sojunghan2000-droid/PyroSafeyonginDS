@@ -12,7 +12,7 @@ from lib.ui import TASK_STATUS_KO, badge, fmt_date, page_header, render_kpi_row
 
 
 # 새 8층 체계 (PDF 도면 기준) — Location 탭에서 사용
-LOCATION_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
+LOCATION_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
 ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
 
 

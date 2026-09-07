@@ -32,7 +32,7 @@ EQ_CATEGORIES = [
 # 등록 가능한 층 (구 명칭 — 일부 로직 호환용)
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
 # 실제 도면 PNG(assets/floors)가 있는 8개 층 — 신규 위치 생성 좌표 픽업용
-SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
+SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
 
 
 INSPECTION_TYPES = [
