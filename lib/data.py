@@ -958,6 +958,24 @@ def archive_round(round_id: str) -> bool:
     return True
 
 
+def _round_has_completed_task(round_id: str) -> bool:
+    return any(
+        t.status == "Completed"
+        for t in tasks_of_round(round_id, include_excluded=True)
+    )
+
+
+def delete_round(round_id: str, by: str) -> bool:
+    """완료된 Task가 하나도 없는 회차를 취소+숨김 한 번에 처리(원클릭 삭제).
+    완료 Task가 있으면 거부(False) — 그 경우는 기존 point-in-time 취소(사유 입력)만 허용."""
+    r = get_round(round_id)
+    if not r or r.cancelled or _round_has_completed_task(round_id):
+        return False
+    if not cancel_round(round_id, "생성 취소", by):
+        return False
+    return archive_round(round_id)
+
+
 def restore_round(round_id: str) -> bool:
     """숨긴 회차를 목록에 다시 표시(복구)."""
     r = get_round(round_id)
