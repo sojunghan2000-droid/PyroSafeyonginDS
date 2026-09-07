@@ -55,6 +55,8 @@ class Equipment:
     inspection_types: list[str] = None  # type: ignore[assignment]
     # v1.1: 도면 위 위치 spot 객체 참조 (없으면 None — 기존 데이터)
     spot_id: str | None = None
+    # v1.9(260907): 소프트 삭제 — False면 목록에서 숨김(이력은 보존)
+    active: bool = True
 
     def __post_init__(self) -> None:
         if self.inspection_types is None:
@@ -399,6 +401,7 @@ def _row_to_equipment(r: dict) -> Equipment:
         pixel_x=r.get("pixel_x") or 0.0, pixel_y=r.get("pixel_y") or 0.0,
         inspection_types=list(r.get("inspection_types") or []),
         spot_id=r.get("spot_id"),
+        active=bool(r.get("active", True)),
     )
 
 
@@ -550,8 +553,11 @@ def inspection_types_table_exists() -> bool:
         return False
 
 
-def load_equipment() -> list[Equipment]:
-    return [_row_to_equipment(r) for r in _equipment_rows()]
+def load_equipment(include_retired: bool = False) -> list[Equipment]:
+    eqs = [_row_to_equipment(r) for r in _equipment_rows()]
+    if not include_retired:
+        eqs = [e for e in eqs if e.active]
+    return eqs
 
 
 def load_tasks() -> list[InspectionTask]:
@@ -669,6 +675,22 @@ def add_equipment(e: Equipment) -> None:
         "inspection_types": e.inspection_types or [],
         "spot_id": e.spot_id,
     }).execute()
+    _equipment_rows.clear()
+
+
+def retire_equipment(equipment_id: str) -> None:
+    """장비를 비활성화(소프트 삭제)한다. 이력은 보존."""
+    _db().table("equipment").update({"active": False}).eq(
+        "equipment_id", equipment_id
+    ).execute()
+    _equipment_rows.clear()
+
+
+def restore_equipment(equipment_id: str) -> None:
+    """비활성화된 장비를 복구한다."""
+    _db().table("equipment").update({"active": True}).eq(
+        "equipment_id", equipment_id
+    ).execute()
     _equipment_rows.clear()
 
 
