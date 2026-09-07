@@ -725,22 +725,6 @@ def render() -> None:
         )
     _spacer()
 
-    # ---------- 별지9 ----------
-    _section_title("별지9 · 소방시설 오동작 관리대장",
-                   "임시소방시설 6종 + 기타 6종 카테고리의 오동작 기록을 PDF로 출력합니다.")
-    _, mid9, _ = st.columns([1, 2, 1])
-    with mid9:
-        st.markdown(_card_header("별지9", "소방시설 오동작 관리대장"), unsafe_allow_html=True)
-        st.download_button(
-            "Download 별지9 PDF",
-            data=_build_pdf_byeolji9(),
-            file_name="별지 9. 소방시설 오동작 관리대장.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            type="primary",
-        )
-    _spacer()
-
     # ---------- QR 스티커 ----------
     _section_title("QR 스티커",
                    "전체 장비의 QR 스티커를 A4 한 페이지당 4×6 그리드(24개)로 출력합니다.")
