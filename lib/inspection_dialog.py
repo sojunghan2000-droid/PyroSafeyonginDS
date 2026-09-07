@@ -1641,7 +1641,10 @@ def task_inspect_inline(task_id: str) -> None:
         new_def_id = data.next_deficiency_id()
         photo_path = None
         if photo_bytes:
-            photo_path = data._upload_action_photo(new_def_id, photo_bytes)
+            # v1.9(260907): 별도 suffix로 저장 — record_deficiency_action이 나중에
+            # 같은 bare deficiency_id로 조치 후 사진을 업로드(upsert)할 때 이 발견 시
+            # 사진 Storage object를 덮어쓰지 않도록 키 충돌을 원천 차단.
+            photo_path = data._upload_action_photo(f"{new_def_id}-disc", photo_bytes)
 
         insp_photo_bytes = insp_photo.getvalue() if insp_photo else None
         insp_photo_path = None
