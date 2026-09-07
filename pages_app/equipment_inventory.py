@@ -528,7 +528,7 @@ def render() -> None:
     # 전 층 도면을 필터 위에 배치 — 자리만 예약하고 rows 계산 후 채운다 (v1.8 스왑)
     _floor_preview_slot = st.container()
 
-    f1, f2, cat_col, _ = st.columns([0.9, 0.9, 1.7, 1.9])
+    f1, f2, cat_col, hide_col = st.columns([0.9, 0.9, 1.7, 1.9])
     with f1:
         floor_filter = st.selectbox(
             "Filter",
@@ -551,6 +551,12 @@ def render() -> None:
             label_visibility="collapsed",
             key="eq_cat_filter",
         )
+    with hide_col:
+        show_retired = st.checkbox(
+            "숨긴 장비 보기", value=False, key="eq_show_retired",
+        )
+        if show_retired:
+            eq = data.load_equipment(include_retired=True)
 
     cat_filter_map = {
         "소화기 · 소화대차": {"소화기", "확산소화기"},
@@ -697,6 +703,23 @@ def render() -> None:
         with cols[7]:
             if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
                 _qr_dialog(e.equipment_id)
+            if e.active:
+                if st.button("삭제", key=f"eq_retire_{e.equipment_id}",
+                             use_container_width=True):
+                    data.retire_equipment(e.equipment_id)
+                    st.success(f"{e.equipment_id} 삭제(숨김) 처리되었습니다.")
+                    st.rerun()
+            else:
+                st.markdown(
+                    "<div style='text-align:center; color:#94A3B8; "
+                    "font-size:0.75rem;'>숨김됨</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("복구", key=f"eq_restore_{e.equipment_id}",
+                             use_container_width=True):
+                    data.restore_equipment(e.equipment_id)
+                    st.success(f"{e.equipment_id} 복구되었습니다.")
+                    st.rerun()
 
     if open_status_for:
         _status_dialog(open_status_for)
