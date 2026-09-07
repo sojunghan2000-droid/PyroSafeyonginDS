@@ -199,9 +199,11 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
 # 출력 양식은 동일 — 보고서 내용 변경 없음.
 
 def _byeolji6_get_photo(item) -> bytes | None:
-    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환)."""
-    # 신모델: Deficiency.action_photo_path → Storage 다운로드
-    path = getattr(item, "action_photo_path", None)
+    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환).
+    Deficiency는 action_photo_path(조치 후) 우선, 없으면 photo_path(발견 시) 폴백
+    — 조치 미확정(action_immediate=False) 상태에서도 최소 발견 사진은 표시."""
+    # 신모델: Deficiency.action_photo_path → Storage 다운로드 (없으면 photo_path 폴백)
+    path = getattr(item, "action_photo_path", None) or getattr(item, "photo_path", None)
     if path:
         try:
             return data._db().storage.from_(data.ACTION_PHOTO_BUCKET).download(path)
@@ -430,7 +432,12 @@ def _build_pdf_inspection_photo_report(round_id: str | None = None) -> bytes:
     flowables.append(PageBreak())
 
     # ---- 섹션 B: 지적사항 조치 전/후 사진대지 ----
-    with_before_after = [d for d in deficiencies if d.photo_path and d.action_photo_path]
+    # 현장 즉시 조치(action_immediate)는 photo_path를 action_photo_path에 그대로 미러링하므로
+    # 두 값이 같은 row는 진짜 전/후 비교가 아니라 제외한다.
+    with_before_after = [
+        d for d in deficiencies
+        if d.photo_path and d.action_photo_path and d.photo_path != d.action_photo_path
+    ]
     flowables.append(Paragraph("지적사항 조치 전/후 사진대지", s["title"]))
     if not with_before_after:
         flowables.append(Paragraph("조치 전/후 사진이 모두 등록된 지적사항이 없습니다.", s["left"]))

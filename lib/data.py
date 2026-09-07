@@ -682,8 +682,20 @@ def add_equipment(e: Equipment) -> None:
     _equipment_rows.clear()
 
 
+def equipment_active_supported() -> bool:
+    """equipment.active 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("equipment").select("active").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 def retire_equipment(equipment_id: str) -> None:
-    """장비를 비활성화(소프트 삭제)한다. 이력은 보존."""
+    """장비를 비활성화(소프트 삭제)한다. 이력은 보존.
+    active 컬럼 미마이그레이션 시 아무 것도 하지 않는다."""
+    if not equipment_active_supported():
+        return
     _db().table("equipment").update({"active": False}).eq(
         "equipment_id", equipment_id
     ).execute()
@@ -691,7 +703,10 @@ def retire_equipment(equipment_id: str) -> None:
 
 
 def restore_equipment(equipment_id: str) -> None:
-    """비활성화된 장비를 복구한다."""
+    """비활성화된 장비를 복구한다.
+    active 컬럼 미마이그레이션 시 아무 것도 하지 않는다."""
+    if not equipment_active_supported():
+        return
     _db().table("equipment").update({"active": True}).eq(
         "equipment_id", equipment_id
     ).execute()
@@ -1034,8 +1049,17 @@ def next_round_id() -> str:
     return f"{prefix}{next_n:03d}"
 
 
+def deficiency_photo_columns_supported() -> bool:
+    """deficiencies.photo_path 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("deficiencies").select("photo_path").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 def add_deficiency(d: Deficiency) -> None:
-    _db().table("deficiencies").insert({
+    payload = {
         "deficiency_id": d.deficiency_id,
         "inspection_date": _iso(d.inspection_date),
         "inspector": d.inspector, "floor": d.floor, "zone": d.zone,
@@ -1051,9 +1075,11 @@ def add_deficiency(d: Deficiency) -> None:
         "defect_codes": list(d.defect_codes or []),  # v1.6
         "defect_other": d.defect_other or "",        # v1.6
         "checklist_items": dict(d.checklist_items or {}),  # v1.7
-        "photo_path": d.photo_path,
-        "inspection_photo_path": d.inspection_photo_path,
-    }).execute()
+    }
+    if deficiency_photo_columns_supported():
+        payload["photo_path"] = d.photo_path
+        payload["inspection_photo_path"] = d.inspection_photo_path
+    _db().table("deficiencies").insert(payload).execute()
     _deficiency_rows.clear()
 
 
@@ -1235,8 +1261,8 @@ def next_notice_no(d: date) -> str:
 # ---------- 집계 (KPI) ----------
 
 def equipment_kpis() -> dict:
-    eq_rows = _equipment_rows()
-    eq = [_row_to_equipment(r) for r in eq_rows]
+    eq = load_equipment()
+    eq_rows = [r for r in _equipment_rows() if bool(r.get("active", True))]
     recent_threshold = TODAY - timedelta(days=2)
     month_start = TODAY.replace(day=1)
     new_this_month = 0

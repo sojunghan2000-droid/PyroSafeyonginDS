@@ -445,7 +445,6 @@ def _inspect_qr_dialog() -> None:
         ("조치 입력",
          f"발급된 통보서의 후속 조치 ({pending_notices}건 대기)",
          pending_notices > 0),
-        ("오동작 등록", "별지9 소방시설 오동작 관리대장 row 추가", True),
     ]
     # 비활성 옵션은 라디오에서 제외 + 안내
     enabled = [a for a in actions if a[2]]
@@ -506,13 +505,10 @@ def _inspect_qr_dialog() -> None:
             if sel == "지적 입력":
                 st.session_state["page"] = "deficiencies"
                 st.session_state["_open_inspect_dialog"] = True
-            elif sel == "조치 입력":
+            else:  # 조치 입력
                 # 점검 작업 페이지 (focus_notice는 페이지가 자동 처리)
                 st.session_state["page"] = "inspection"
                 st.session_state["focus_equipment"] = eq.equipment_id
-            else:  # 오동작 등록
-                st.session_state["page"] = "deficiencies"
-                st.session_state["_open_malfunction_dialog"] = True
             st.rerun()
 
 
