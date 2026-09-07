@@ -1163,20 +1163,20 @@ def _max_seq_in_ids(ids: list[str], prefix: str) -> int:
 
 def next_equipment_id() -> str:
     """다음 장비 ID (EQ-NNNN)."""
-    ids = [e.equipment_id for e in load_equipment()]
+    ids = [e.equipment_id for e in load_equipment(include_retired=True)]
     return f"EQ-{_max_seq_in_ids(ids, 'EQ-') + 1:04d}"
 
 
 def next_serial(prefix: str = "PYRO") -> str:
     """다음 시리얼 번호 (PYRO-NNNNN)."""
-    serials = [e.serial for e in load_equipment()]
+    serials = [e.serial for e in load_equipment(include_retired=True)]
     return f"{prefix}-{_max_seq_in_ids(serials, f'{prefix}-') + 1:05d}"
 
 
 def next_location_id(floor: str, zone: str) -> str:
     """같은 층/구역의 다음 순번 위치 ID. 예: B3-SEC4-W3"""
     base = f"{floor}-{zone}-"
-    existing = [e.location_id for e in load_equipment() if e.location_id.startswith(base)]
+    existing = [e.location_id for e in load_equipment(include_retired=True) if e.location_id.startswith(base)]
     # 위치 ID는 -W2, -01 등 다양한 패턴이라 단순히 카운트만
     return f"{base}W{len(existing) + 1}"
 
