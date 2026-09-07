@@ -145,18 +145,31 @@ def _round_detail_dialog(round_id: str) -> None:
     _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
     with c_cancel:
         _cancel_supported = data.round_cancel_supported()
-        can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
-        if can_cancel:
-            if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
-                         use_container_width=True):
-                st.session_state[f"round_cancel_open_{round_id}"] = True
+        _has_completed = any(t.status == "Completed" for t in tasks_all)
+        if _cancel_supported and not r.cancelled and not _has_completed:
+            # 완료 Task가 하나도 없는 회차 — 사유 입력 없이 즉시 삭제(취소+숨김)
+            if st.button("삭제", key=f"round_delete_{round_id}",
+                         use_container_width=True,
+                         help="완료된 점검이 없는 회차를 즉시 삭제(숨김)합니다."):
+                _delete_by = (auth.current_user() or {}).get("name") or "관리자"
+                if data.delete_round(round_id, _delete_by):
+                    st.success(f"{round_id} 삭제되었습니다.")
+                    st.rerun()
+                else:
+                    st.error("삭제할 수 없는 회차입니다.")
         else:
-            _cancel_help = (
-                "회차 취소 컬럼 마이그레이션이 필요합니다." if not _cancel_supported
-                else "완료·기취소 회차는 취소할 수 없습니다."
-            )
-            st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
-                      use_container_width=True, disabled=True, help=_cancel_help)
+            can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
+            if can_cancel:
+                if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
+                             use_container_width=True):
+                    st.session_state[f"round_cancel_open_{round_id}"] = True
+            else:
+                _cancel_help = (
+                    "회차 취소 컬럼 마이그레이션이 필요합니다." if not _cancel_supported
+                    else "완료·기취소 회차는 취소할 수 없습니다."
+                )
+                st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
+                          use_container_width=True, disabled=True, help=_cancel_help)
     with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
