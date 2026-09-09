@@ -55,10 +55,13 @@ def try_restore_session() -> None:
         return
     try:
         tokens = json.loads(unquote(raw))
+        print("[PYROSAFE-DEBUG] try_restore_session: cookie decoded OK")
         c = anon_client()
         c.auth.set_session(tokens["access_token"], tokens["refresh_token"])
         s = c.auth.get_session()
         resp = c.auth.get_user()
+        print(f"[PYROSAFE-DEBUG] try_restore_session: s={bool(s)} resp={bool(resp)} "
+              f"user={bool(resp and resp.user)}")
         if not s or not resp or not resp.user:
             return
         u = resp.user
@@ -72,8 +75,9 @@ def try_restore_session() -> None:
             "refresh_token": s.refresh_token,
         }
         # 쿠키 갱신(토큰 회전 대응)은 sync_session_cookie()가 뒤이어 일괄 처리한다.
-    except Exception:
-        pass
+        print("[PYROSAFE-DEBUG] try_restore_session: SUCCESS, auth restored")
+    except Exception as e:
+        print(f"[PYROSAFE-DEBUG] try_restore_session: EXCEPTION {type(e).__name__}: {e}")
 
 
 def username_to_email(username: str) -> str:
