@@ -32,7 +32,7 @@ EQ_CATEGORIES = [
 # 등록 가능한 층 (구 명칭 — 일부 로직 호환용)
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
 # 실제 도면 PNG(assets/floors)가 있는 8개 층 — 신규 위치 생성 좌표 픽업용
-SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
+SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
 
 
 INSPECTION_TYPES = [
@@ -1421,19 +1421,13 @@ def task_inspect_inline(task_id: str) -> None:
                 "사유 카탈로그·조치 사진을 첨부해 주세요."
             )
 
-    insp_photo = photo_input(
-        "점검사진 (선택)",
-        key=f"tsk_insp_photo_{task_id}",
-        help_text="점검 현장 사진(결과 무관, 1장). 모바일은 카메라 촬영 탭 이용.",
-    )
-
     st.markdown(
         "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
         "점검 결과</b>",
         unsafe_allow_html=True,
     )
     result = st.radio(
-        "결과", ["양호", "불량"], horizontal=True,
+        "결과", ["양호", "불량", "오동작"], horizontal=True,
         label_visibility="collapsed", key=f"tsk_res_{task_id}",
     )
 
@@ -1442,6 +1436,55 @@ def task_inspect_inline(task_id: str) -> None:
     action_note_now = ""
     action_photo_now = None
     confirmer_value = inspector
+
+    # 오동작 입력 영역 (v1.5+)
+    mal_category = (eq.category if eq else "기타")
+    mal_detail = ""
+    mal_occurred = inspect_date
+    if result == "오동작":
+        st.caption(
+            "⚠ 시설 자체의 오작동을 별지9에 기록합니다. "
+            "조치는 [작업 조치 관리]에서 별도 시점에 입력하세요."
+        )
+        all_mal_cats = list(MAL_CATEGORIES_TEMP) + list(MAL_CATEGORIES_OTHER)
+        auto_mapped = (mal_category in all_mal_cats)
+
+        mc1, mc2 = st.columns([1, 1])
+        with mc1:
+            if auto_mapped:
+                # 장비 카테고리가 별지9 카테고리에 직접 매핑 — 텍스트만 표시
+                st.markdown(
+                    f"<div style='color:#475569; font-size:0.86rem;'>"
+                    f"<b style='color:#334155;'>시설구분 (별지9)</b><br>"
+                    f"<span style='font-size:0.95rem; color:#0F172A;'>"
+                    f"{mal_category}</span>"
+                    f"<span style='color:#94A3B8; font-size:0.78rem; "
+                    f"margin-left:0.3rem;'>(Task 장비 기준 자동)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                # 별지9에 직접 매핑 없음 — 사용자 선택 필요
+                st.caption(
+                    f"장비({mal_category})가 별지9 카테고리에 직접 매핑되지 않습니다. "
+                    "분류를 선택해 주세요."
+                )
+                mal_category = st.selectbox(
+                    "시설구분 (별지9)",
+                    options=all_mal_cats,
+                    index=0,
+                    key=f"tsk_mal_cat_{task_id}",
+                )
+        with mc2:
+            mal_occurred = st.date_input(
+                "발생일자", value=inspect_date,
+                key=f"tsk_mal_date_{task_id}",
+            )
+        mal_detail = st.text_area(
+            "오동작 내용",
+            placeholder="예: 점등 불량, 충수 상태 불량, 오작동 등",
+            key=f"tsk_mal_detail_{task_id}",
+        )
 
     # v1.6: 점검 종류 매칭되는 불량 사유 카탈로그 (화기작업/가설컨테이너)
     # types_selected에서 카탈로그 보유 종류가 하나라도 있으면 그것의 사유 카탈로그를 사용
@@ -1517,6 +1560,36 @@ def task_inspect_inline(task_id: str) -> None:
         use_container_width=True,
         key=f"tsk_submit_{task_id}",
     ):
+        if result == "오동작":
+            if not mal_detail.strip():
+                st.error("오동작 내용을 입력해 주세요.")
+                return
+            # 오동작은 별지9에 등록, Deficiency 생성 X
+            from lib.data import next_malfunction_id, Malfunction, _db, _task_rows, _refresh_round_status
+            new_mid = next_malfunction_id()
+            data.add_malfunction(Malfunction(
+                malfunction_id=new_mid,
+                category=mal_category,  # type: ignore[arg-type]
+                occurred_on=mal_occurred,
+                detail=mal_detail.strip(),
+                action="",
+                confirmer=inspector,
+                task_id=t.task_id,
+                action_done=False,
+            ))
+            # Task → Completed + 회차 status 자동 재계산
+            _db().table("inspection_tasks").update(
+                {"status": "Completed"}
+            ).eq("task_id", t.task_id).execute()
+            _task_rows.clear()
+            if t.round_id:
+                _refresh_round_status(t.round_id)
+            st.session_state.pop("round_inline_start_for", None)
+            st.session_state["just_completed_task"] = t.task_id
+            st.session_state["just_submitted_malfunction"] = True
+            st.rerun()
+            return
+
         if not types_selected:
             st.error("점검 종류를 1개 이상 선택해 주세요.")
             return
@@ -1562,17 +1635,7 @@ def task_inspect_inline(task_id: str) -> None:
         new_def_id = data.next_deficiency_id()
         photo_path = None
         if photo_bytes:
-            # v1.9(260907): 별도 suffix로 저장 — record_deficiency_action이 나중에
-            # 같은 bare deficiency_id로 조치 후 사진을 업로드(upsert)할 때 이 발견 시
-            # 사진 Storage object를 덮어쓰지 않도록 키 충돌을 원천 차단.
-            photo_path = data._upload_action_photo(f"{new_def_id}-disc", photo_bytes)
-
-        insp_photo_bytes = insp_photo.getvalue() if insp_photo else None
-        insp_photo_path = None
-        if insp_photo_bytes:
-            insp_photo_path = data._upload_action_photo(
-                f"{new_def_id}-insp", insp_photo_bytes
-            )
+            photo_path = data._upload_action_photo(new_def_id, photo_bytes)
 
         # issue 텍스트 — 사유 카탈로그가 있으면 사유 요약, 없으면 자유 입력
         if result == "불량" and matching_kind_for_codes:
@@ -1607,17 +1670,11 @@ def task_inspect_inline(task_id: str) -> None:
             action_done=action_immediate or result == "양호",
             action_at=inspect_date if (action_immediate or result == "양호") else None,
             action_note=action_note_now.strip() if action_immediate else "",
-            # v1.9(260907): 발견 시 사진은 photo_path로 이동. 단, "현장에서 즉시 조치 완료"를
-            # 체크한 경우는 같은 사진이 조치 결과 사진이기도 하므로 action_photo_path에도 그대로
-            # 채워야 별지6(조치 결과 사진 컬럼)이 계속 사진을 보여준다. 즉시조치가 아니면 None으로
-            # 시작해, 나중에 [작업 조치 관리] record_deficiency_action이 조치 후 사진으로 채운다.
-            action_photo_path=(photo_path if action_immediate else None),
+            action_photo_path=photo_path,
             submitter=inspector,
             defect_codes=defect_codes_selected,  # v1.6
             defect_other=defect_other_text.strip(),  # v1.6
             checklist_items=checklist_items,  # v1.7
-            photo_path=photo_path,                    # 발견 시(조치 전) 사진
-            inspection_photo_path=insp_photo_path,     # 결과 무관 점검사진
         ))
 
         # 장비 health_status 갱신 (있으면)

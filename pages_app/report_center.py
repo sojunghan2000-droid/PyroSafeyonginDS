@@ -199,11 +199,9 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
 # 출력 양식은 동일 — 보고서 내용 변경 없음.
 
 def _byeolji6_get_photo(item) -> bytes | None:
-    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환).
-    Deficiency는 action_photo_path(조치 후) 우선, 없으면 photo_path(발견 시) 폴백
-    — 조치 미확정(action_immediate=False) 상태에서도 최소 발견 사진은 표시."""
-    # 신모델: Deficiency.action_photo_path → Storage 다운로드 (없으면 photo_path 폴백)
-    path = getattr(item, "action_photo_path", None) or getattr(item, "photo_path", None)
+    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환)."""
+    # 신모델: Deficiency.action_photo_path → Storage 다운로드
+    path = getattr(item, "action_photo_path", None)
     if path:
         try:
             return data._db().storage.from_(data.ACTION_PHOTO_BUCKET).download(path)
@@ -364,106 +362,6 @@ def _build_pdf_byeolji6(notice=None) -> bytes:
         ]
         notice = defs[0] if defs else None
     return _build_pdf_byeolji6_multi([notice])
-
-
-# ---------- 사진 다운로드 공용 헬퍼 (photo_path/action_photo_path/inspection_photo_path 공용) ----------
-
-def _download_photo(path: str | None) -> bytes | None:
-    """임의의 Storage 경로에서 사진 bytes를 가져옴."""
-    if not path:
-        return None
-    try:
-        return data._db().storage.from_(data.ACTION_PHOTO_BUCKET).download(path)
-    except Exception:
-        return None
-
-
-# ---------- 점검결과 보고 (사진대지) — 260907 신규 ----------
-
-def _build_pdf_inspection_photo_report(round_id: str | None = None) -> bytes:
-    """별지5 외 범용 사진대지 보고서.
-    섹션 A: 점검구간별 점검사진(inspection_photo_path, 결과 무관).
-    섹션 B: 지적사항 조치 전/후 사진(photo_path / action_photo_path)."""
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle, PageBreak
-
-    s = _styles()
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=15 * mm, bottomMargin=15 * mm,
-    )
-
-    deficiencies = data.load_deficiencies()
-    if round_id:
-        round_tasks = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
-        deficiencies = [d for d in deficiencies if d.task_id in round_tasks]
-
-    flowables = []
-
-    # ---- 섹션 A: 점검결과 보고 (점검사진, 결과 무관) ----
-    with_insp_photo = [d for d in deficiencies if d.inspection_photo_path]
-    flowables.append(Paragraph("점검결과 보고 — 점검사진", s["title"]))
-    if not with_insp_photo:
-        flowables.append(Paragraph("등록된 점검사진이 없습니다.", s["left"]))
-    else:
-        COL_W_A = [30 * mm, 75 * mm, 75 * mm]  # 180mm 합
-        rows = [[Paragraph("점검구간", s["h"]), Paragraph("점검사진", s["h"]), Paragraph("비고", s["h"])]]
-        row_heights = [8 * mm]
-        for d in with_insp_photo:
-            photo = _photo_image(_download_photo(d.inspection_photo_path), max_w_mm=70, max_h_mm=55)
-            rows.append([
-                Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),
-                photo if photo else Paragraph("사진 로드 실패", s["cell"]),
-                Paragraph(d.issue or "", s["left"]),
-            ])
-            row_heights.append(60 * mm)
-        tbl = Table(rows, colWidths=COL_W_A, rowHeights=row_heights, repeatRows=1)
-        tbl.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
-        ]))
-        flowables.append(tbl)
-
-    flowables.append(PageBreak())
-
-    # ---- 섹션 B: 지적사항 조치 전/후 사진대지 ----
-    # 현장 즉시 조치(action_immediate)는 photo_path를 action_photo_path에 그대로 미러링하므로
-    # 두 값이 같은 row는 진짜 전/후 비교가 아니라 제외한다.
-    with_before_after = [
-        d for d in deficiencies
-        if d.photo_path and d.action_photo_path and d.photo_path != d.action_photo_path
-    ]
-    flowables.append(Paragraph("지적사항 조치 전/후 사진대지", s["title"]))
-    if not with_before_after:
-        flowables.append(Paragraph("조치 전/후 사진이 모두 등록된 지적사항이 없습니다.", s["left"]))
-    else:
-        COL_W_B = [30 * mm, 75 * mm, 75 * mm]
-        rows = [[Paragraph("점검구간", s["h"]), Paragraph("조치 前", s["h"]), Paragraph("조치 後", s["h"])]]
-        row_heights = [8 * mm]
-        for d in with_before_after:
-            before = _photo_image(_download_photo(d.photo_path), max_w_mm=70, max_h_mm=55)
-            after = _photo_image(_download_photo(d.action_photo_path), max_w_mm=70, max_h_mm=55)
-            rows.append([
-                Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),
-                before if before else Paragraph("사진 로드 실패", s["cell"]),
-                after if after else Paragraph("사진 로드 실패", s["cell"]),
-            ])
-            row_heights.append(60 * mm)
-        tbl = Table(rows, colWidths=COL_W_B, rowHeights=row_heights, repeatRows=1)
-        tbl.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
-        ]))
-        flowables.append(tbl)
-
-    doc.build(flowables)
-    return buf.getvalue()
 
 
 # ---------- 별지9 소방시설 오동작 관리대장 ----------
@@ -706,29 +604,19 @@ def render() -> None:
                 )
     _spacer()
 
-    # ---------- 점검결과 보고 (사진대지, 260907 신규) ----------
-    _section_title("점검결과 보고 · 사진대지",
-                   "별지5 법정 서식 외 범용 사진 증빙 보고서. "
-                   "점검사진 + 지적사항 조치 전/후 사진을 회차 단위로 출력합니다.")
-    _, midp, _ = st.columns([1, 2, 1])
-    with midp:
-        st.markdown(_card_header("점검결과 보고", "사진대지"), unsafe_allow_html=True)
-        _optsp = {"전체 (모든 회차)": None}
-        for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
-            if getattr(_r, "cancelled", False) or _r.task_type == data.MAL_ROUND_TYPE:
-                continue
-            _optsp[f"{_r.round_id} · {_r.task_type}"] = _r.round_id
-        _sel_labelp = st.selectbox("출력 범위", list(_optsp.keys()), key="insp_photo_report_scope")
-        _sel_roundp = _optsp[_sel_labelp]
-        _fnamep = (f"점검결과 보고 - {_sel_roundp}.pdf" if _sel_roundp else "점검결과 보고.pdf")
+    # ---------- 별지9 ----------
+    _section_title("별지9 · 소방시설 오동작 관리대장",
+                   "임시소방시설 6종 + 기타 6종 카테고리의 오동작 기록을 PDF로 출력합니다.")
+    _, mid9, _ = st.columns([1, 2, 1])
+    with mid9:
+        st.markdown(_card_header("별지9", "소방시설 오동작 관리대장"), unsafe_allow_html=True)
         st.download_button(
-            "Download 점검결과 보고 PDF",
-            data=_build_pdf_inspection_photo_report(_sel_roundp),
-            file_name=_fnamep,
+            "Download 별지9 PDF",
+            data=_build_pdf_byeolji9(),
+            file_name="별지 9. 소방시설 오동작 관리대장.pdf",
             mime="application/pdf",
             use_container_width=True,
             type="primary",
-            key="insp_photo_report_dl",
         )
     _spacer()
 
