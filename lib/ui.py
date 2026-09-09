@@ -55,6 +55,11 @@ THEME_CSS = """
         gap: 1.5rem;
         z-index: 9000;
     }
+    .ps-topbar-brand {
+        font-size: 1.2rem; font-weight: 700; color: #2563EB;
+        letter-spacing: -0.01em;
+        flex-shrink: 0;
+    }
     .ps-topbar-spacer { flex: 1; }
     .ps-topbar-actions {
         display: flex; align-items: center; gap: 0.75rem;
@@ -113,18 +118,9 @@ THEME_CSS = """
         background: #F1F5F9 !important;
         color: #0F172A !important;
     }
-    /* st.popover trigger의 chevron(expand_more) 숨김 — 알림 벨에는 불필요
-       (Streamlit 내부 emotion 스타일과의 우선순위 충돌 방지를 위해 specificity를 높이고
-        display 외 속성도 함께 덮어써 이중 방어) */
-    .st-key-notify_btn.st-key-notify_btn button svg,
-    .st-key-notify_btn.st-key-notify_btn button [data-testid="stIconMaterial"][data-testid="stIconMaterial"],
-    .st-key-notify_btn.st-key-notify_btn button div[aria-hidden="true"][aria-hidden="true"] {
+    /* st.popover trigger의 chevron(expand_more) 숨김 — 알림 벨에는 불필요 */
+    .st-key-notify_btn button div[aria-hidden="true"] {
         display: none !important;
-        visibility: hidden !important;
-        width: 0 !important;
-        height: 0 !important;
-        overflow: hidden !important;
-        opacity: 0 !important;
     }
     /* 1+ 카운트 표시 시 빨강 강조 (body 클래스 기반 토글) */
     body.ps-has-alerts .st-key-notify_btn button {
@@ -551,37 +547,11 @@ def render_topbar(_active_page: str | None = None) -> None:
     """전역 상단바 렌더. 인자는 하위 호환용으로만 받고 사용하지 않는다 (PRD R6)."""
     html = """
 <div class="ps-topbar">
+    <div class="ps-topbar-brand">Samsung C&amp;T</div>
     <div class="ps-topbar-spacer"></div>
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
-    # v1.9(260907): 브랜드 텍스트를 클릭 가능한 버튼으로 — 대시보드로 이동.
-    # 순수 HTML은 Python 콜백을 못 부르므로 st.button을 기존 텍스트처럼 스타일링해 겹쳐 배치.
-    st.markdown(
-        """<style>
-        .st-key-topbar_brand {
-            position: fixed; top: 13px; left: 1.75rem;
-            z-index: 9001;
-            width: fit-content !important;
-            display: flex !important; flex-direction: row !important;
-            align-items: center !important;
-        }
-        .st-key-topbar_brand button {
-            background: transparent !important; border: none !important;
-            box-shadow: none !important; padding: 0 !important;
-            height: 38px !important; min-height: 38px !important;
-            display: flex !important; align-items: center !important;
-            font-size: 1.2rem !important; font-weight: 700 !important;
-            color: #2563EB !important; letter-spacing: -0.01em;
-        }
-        .st-key-topbar_brand button:hover { color: #1D4ED8 !important; }
-        </style>""",
-        unsafe_allow_html=True,
-    )
-    with st.container(key="topbar_brand"):
-        if st.button("Samsung C&T", key="topbar_brand_btn"):
-            st.session_state["page"] = "dashboard"
-            st.rerun()
     _render_help_button()
     _render_notify_button()
     _render_avatar_menu()
@@ -1137,15 +1107,10 @@ TASK_STATUS_KO = {
 
 def photo_input(label: str, key: str,
                 accept_types: list[str] | None = None,
-                help_text: str | None = None,
-                max_files: int = 1):
-    """사진 입력. 파일 업로드 / 카메라 촬영 두 탭으로 제공.
-
-    max_files=1(기본, 기존과 동일한 동작): 카메라 촬영본이 있으면 그것을, 없으면
-    업로드 파일 1개를 반환(.getvalue()로 bytes를 얻을 수 있는 UploadedFile 호환, 없으면 None).
-
-    max_files>1(v1.9/260907): 파일 업로드 탭이 다중 선택을 지원하고, 카메라 촬영본도
-    합쳐 최대 max_files개까지 담은 리스트를 반환(초과분은 잘라내고 경고 표시)."""
+                help_text: str | None = None):
+    """조치 사진용 사진 입력. 파일 업로드 / 카메라 촬영 두 탭으로 제공.
+    카메라 촬영본이 있으면 그것을, 없으면 업로드 파일을 반환.
+    반환 객체는 .getvalue()로 bytes를 얻을 수 있는 UploadedFile 호환."""
     if accept_types is None:
         accept_types = ["jpg", "jpeg", "png"]
 
@@ -1163,7 +1128,6 @@ def photo_input(label: str, key: str,
             type=accept_types,
             key=f"{key}_file",
             label_visibility="collapsed",
-            accept_multiple_files=(max_files > 1),
         )
     with tab_cam:
         camera = st.camera_input(
@@ -1171,18 +1135,8 @@ def photo_input(label: str, key: str,
             key=f"{key}_camera",
             label_visibility="collapsed",
         )
-
-    if max_files <= 1:
-        # 카메라 촬영본 우선 (가장 최근 입력으로 가정)
-        return camera if camera is not None else uploaded
-
-    files = list(uploaded) if uploaded else []
-    if camera is not None:
-        files.append(camera)
-    if len(files) > max_files:
-        st.warning(f"사진은 최대 {max_files}장까지만 사용됩니다 — 앞의 {max_files}장만 반영됩니다.")
-        files = files[:max_files]
-    return files
+    # 카메라 촬영본 우선 (가장 최근 입력으로 가정)
+    return camera if camera is not None else uploaded
 
 
 def badge(text: str) -> str:

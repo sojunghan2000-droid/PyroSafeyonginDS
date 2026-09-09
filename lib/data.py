@@ -283,10 +283,6 @@ class Deficiency:
     photo_path: str | None = None
     # v1.9(260907): 점검 결과(양호/불량) 무관 점검사진
     inspection_photo_path: str | None = None
-    # v1.9(260907): 각 사진 종류별 2번째 사진(선택, 최대 2장)
-    photo_path2: str | None = None
-    action_photo_path2: str | None = None
-    inspection_photo_path2: str | None = None
 
     def __post_init__(self) -> None:
         if self.defect_codes is None:
@@ -467,9 +463,6 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         checklist_items=dict(r.get("checklist_items") or {}),  # v1.7
         photo_path=r.get("photo_path"),
         inspection_photo_path=r.get("inspection_photo_path"),
-        photo_path2=r.get("photo_path2"),
-        action_photo_path2=r.get("action_photo_path2"),
-        inspection_photo_path2=r.get("inspection_photo_path2"),
     )
 
 
@@ -1065,15 +1058,6 @@ def deficiency_photo_columns_supported() -> bool:
         return False
 
 
-def deficiency_photo_columns2_supported() -> bool:
-    """deficiencies.photo_path2 등 2번째 사진 슬롯 컬럼(마이그레이션) 존재 여부."""
-    try:
-        _db().table("deficiencies").select("photo_path2").limit(1).execute()
-        return True
-    except Exception:
-        return False
-
-
 def add_deficiency(d: Deficiency) -> None:
     payload = {
         "deficiency_id": d.deficiency_id,
@@ -1095,27 +1079,20 @@ def add_deficiency(d: Deficiency) -> None:
     if deficiency_photo_columns_supported():
         payload["photo_path"] = d.photo_path
         payload["inspection_photo_path"] = d.inspection_photo_path
-    if deficiency_photo_columns2_supported():
-        payload["photo_path2"] = d.photo_path2
-        payload["action_photo_path2"] = d.action_photo_path2
-        payload["inspection_photo_path2"] = d.inspection_photo_path2
     _db().table("deficiencies").insert(payload).execute()
     _deficiency_rows.clear()
 
 
 def record_deficiency_action(
     deficiency_id: str, action_at: date, action_note: str,
-    confirmer: str, photo: bytes | None, photo2: bytes | None = None,
+    confirmer: str, photo: bytes | None,
 ) -> None:
     """별지5 지적사항에 조치 단계 기록 (구 별지6 통보서 조치 흡수).
-    사진은 action-photos 버킷에 업로드. photo2는 v1.9(260907) 2번째 조치 후 사진(선택)."""
+    사진은 action-photos 버킷에 업로드."""
     photo_path = None
     if photo:
         # 통보서 사진 키 컨벤션 재사용 (deficiency_id로 저장)
         photo_path = _upload_action_photo(deficiency_id, photo)
-    photo_path2 = None
-    if photo2:
-        photo_path2 = _upload_action_photo(f"{deficiency_id}-2", photo2)
     payload = {
         "action_done": True,
         "action_at": _iso(action_at),
@@ -1124,8 +1101,6 @@ def record_deficiency_action(
     }
     if photo_path:
         payload["action_photo_path"] = photo_path
-    if photo_path2 and deficiency_photo_columns2_supported():
-        payload["action_photo_path2"] = photo_path2
     _db().table("deficiencies").update(payload).eq(
         "deficiency_id", deficiency_id
     ).execute()

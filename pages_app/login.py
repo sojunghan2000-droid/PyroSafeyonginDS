@@ -58,7 +58,7 @@ def _signup_tab() -> None:
 
 
 def render() -> None:
-    _, center, _ = st.columns([1, 0.6, 1])
+    _, center, _ = st.columns([1, 1.2, 1])
     with center:
         st.markdown(
             """
