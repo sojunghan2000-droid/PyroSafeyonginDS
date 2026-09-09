@@ -112,7 +112,13 @@ def _render_table_header() -> None:
     st.markdown(
         "<style>"
         # st.popover 자동 chevron(▾) 아이콘 숨김 — 라벨 "?"만 노출
-        ".st-key-eqhdr [data-testid='stPopoverButton'] svg{display:none!important;}"
+        # (Streamlit 내부 emotion 스타일과의 우선순위 충돌 방지를 위해 클래스/속성 셀렉터를
+        #  중복 기술해 specificity를 높이고, display 외 속성도 함께 덮어써 이중 방어)
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] svg,"
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] [data-testid='stIconMaterial'][data-testid='stIconMaterial'],"
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] div[aria-hidden='true'][aria-hidden='true']"
+        "{display:none!important;visibility:hidden!important;width:0!important;"
+        "height:0!important;overflow:hidden!important;opacity:0!important;}"
         # "?"를 작은 원형 도움말 배지로
         ".st-key-eqhdr [data-testid='stPopoverButton']{"
         "background:#F1F5F9!important;border:1px solid #E2E8F0!important;box-shadow:none!important;"
@@ -701,25 +707,30 @@ def render() -> None:
                          use_container_width=True):
                 open_status_for = e.equipment_id
         with cols[7]:
-            if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
-                _qr_dialog(e.equipment_id)
-            if e.active:
-                if st.button("삭제", key=f"eq_retire_{e.equipment_id}",
-                             use_container_width=True):
-                    data.retire_equipment(e.equipment_id)
-                    st.success(f"{e.equipment_id} 삭제(숨김) 처리되었습니다.")
-                    st.rerun()
-            else:
+            # [변경]/[삭제·복구]를 한 줄에 나란히 (세로로 2줄 쌓이지 않게)
+            b_chg, b_act = st.columns(2, gap="small")
+            with b_chg:
+                if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
+                    _qr_dialog(e.equipment_id)
+            with b_act:
+                if e.active:
+                    if st.button("삭제", key=f"eq_retire_{e.equipment_id}",
+                                 use_container_width=True):
+                        data.retire_equipment(e.equipment_id)
+                        st.success(f"{e.equipment_id} 삭제(숨김) 처리되었습니다.")
+                        st.rerun()
+                else:
+                    if st.button("복구", key=f"eq_restore_{e.equipment_id}",
+                                 use_container_width=True):
+                        data.restore_equipment(e.equipment_id)
+                        st.success(f"{e.equipment_id} 복구되었습니다.")
+                        st.rerun()
+            if not e.active:
                 st.markdown(
                     "<div style='text-align:center; color:#94A3B8; "
                     "font-size:0.75rem;'>숨김됨</div>",
                     unsafe_allow_html=True,
                 )
-                if st.button("복구", key=f"eq_restore_{e.equipment_id}",
-                             use_container_width=True):
-                    data.restore_equipment(e.equipment_id)
-                    st.success(f"{e.equipment_id} 복구되었습니다.")
-                    st.rerun()
 
     if open_status_for:
         _status_dialog(open_status_for)

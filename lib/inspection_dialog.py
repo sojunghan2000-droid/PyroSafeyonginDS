@@ -144,9 +144,20 @@ def new_inspection_dialog() -> None:
     action_immediate = False
     action_note_now = ""
     action_photo_now = None
+    before_photo_now = None
     confirmer = inspector
+    is_container = data.INSPECTION_KIND_CONTAINER in types_selected
 
     if result == "불량":
+        before_photo_now = photo_input(
+            "조치 전 사진" + (" *" if is_container else " (선택)"),
+            key="dlg_before_photo",
+            help_text=(
+                "가설컨테이너 사무실 점검은 조치 전 사진이 필수입니다. "
+                if is_container else ""
+            ) + "최대 2장. 휴대폰·태블릿은 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+            max_files=2,
+        )
         issue = st.text_area("지적사항",
                              placeholder="예: 1-A계단 피난구 유도등 점등 불량",
                              key="dlg_issue")
@@ -185,6 +196,9 @@ def new_inspection_dialog() -> None:
         if result == "불량" and not issue.strip():
             st.error("불량인 경우 지적사항을 입력해 주세요.")
             return
+        if result == "불량" and is_container and not before_photo_now:
+            st.error("가설컨테이너 사무실 점검은 조치 전 사진 없이는 저장할 수 없습니다.")
+            return
 
         # 회차 연결 — 렌더 시 결정된 선택값 사용
         # (진행 중 점검 1건=자동 / 2건 이상=사용자가 위에서 선택 / 0건=None)
@@ -210,6 +224,15 @@ def new_inspection_dialog() -> None:
             ))
 
         new_def_id = data.next_deficiency_id()
+        _before_files = before_photo_now or []
+        before_photo_path = (
+            data._upload_action_photo(f"{new_def_id}-disc", _before_files[0].getvalue())
+            if len(_before_files) >= 1 else None
+        )
+        before_photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-disc2", _before_files[1].getvalue())
+            if len(_before_files) >= 2 else None
+        )
         add_deficiency(Deficiency(
             deficiency_id=new_def_id,
             inspection_date=inspect_date, inspector=inspector,
@@ -220,6 +243,8 @@ def new_inspection_dialog() -> None:
             confirmer=confirmer if (result == "양호" or action_immediate) else None,
             notice_no=new_no,
             task_id=matched_task_id,
+            photo_path=before_photo_path,
+            photo_path2=before_photo_path2,
         ))
 
         # 장비의 최근 점검일·건강 상태 갱신 (KPI 카드 즉시 반영)
@@ -1054,10 +1079,11 @@ def action_input_dialog(deficiency_id: str) -> None:
         placeholder="예: 적재물 이동 완료, 전구 교체, 안전핀 재장착 등",
         key=f"act_dlg_note_{deficiency_id}",
     )
-    photo = photo_input(
+    photos = photo_input(
         "조치 결과 사진",
         key=f"act_dlg_photo_{deficiency_id}",
-        help_text="휴대폰·태블릿에서는 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+        help_text="최대 2장. 휴대폰·태블릿에서는 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+        max_files=2,
     )
 
     if st.button(
@@ -1067,13 +1093,16 @@ def action_input_dialog(deficiency_id: str) -> None:
         if not action_note.strip():
             st.error("조치 내용을 입력해 주세요.")
             return
-        photo_bytes = photo.getvalue() if photo else None
+        _photos = photos or []
+        photo_bytes = _photos[0].getvalue() if len(_photos) >= 1 else None
+        photo_bytes2 = _photos[1].getvalue() if len(_photos) >= 2 else None
         data.record_deficiency_action(
             deficiency_id=deficiency_id,
             action_at=action_at,
             action_note=action_note.strip(),
             confirmer=confirmer.strip() or "김소장",
             photo=photo_bytes,
+            photo2=photo_bytes2,
         )
         st.session_state["just_recorded_action"] = deficiency_id
         st.rerun()
@@ -1424,7 +1453,8 @@ def task_inspect_inline(task_id: str) -> None:
     insp_photo = photo_input(
         "점검사진 (선택)",
         key=f"tsk_insp_photo_{task_id}",
-        help_text="점검 현장 사진(결과 무관, 1장). 모바일은 카메라 촬영 탭 이용.",
+        help_text="점검 현장 사진(결과 무관, 최대 2장). 모바일은 카메라 촬영 탭 이용.",
+        max_files=2,
     )
 
     st.markdown(
@@ -1486,7 +1516,8 @@ def task_inspect_inline(task_id: str) -> None:
         action_photo_now = photo_input(
             "조치 사진 *",
             key=f"tsk_act_photo_{task_id}",
-            help_text="불량 시 사진 첨부 필수. 모바일은 카메라 촬영 탭으로 즉시 촬영.",
+            help_text="불량 시 사진 첨부 필수(최대 2장). 모바일은 카메라 촬영 탭으로 즉시 촬영.",
+            max_files=2,
         )
 
         action_immediate = st.checkbox(
@@ -1553,26 +1584,32 @@ def task_inspect_inline(task_id: str) -> None:
         if result == "불량":
             new_no = next_notice_no(inspect_date)
 
-        # 사진 업로드 — v1.6: 불량 시 항상, 양호 시 없음
-        photo_bytes = (
-            action_photo_now.getvalue()
-            if (action_photo_now and result == "불량")
-            else None
+        # 사진 업로드 — v1.6: 불량 시 항상, 양호 시 없음. v1.9(260907): 최대 2장.
+        _action_photos = (
+            (action_photo_now or []) if result == "불량" else []
         )
         new_def_id = data.next_deficiency_id()
-        photo_path = None
-        if photo_bytes:
-            # v1.9(260907): 별도 suffix로 저장 — record_deficiency_action이 나중에
-            # 같은 bare deficiency_id로 조치 후 사진을 업로드(upsert)할 때 이 발견 시
-            # 사진 Storage object를 덮어쓰지 않도록 키 충돌을 원천 차단.
-            photo_path = data._upload_action_photo(f"{new_def_id}-disc", photo_bytes)
+        # v1.9(260907): 별도 suffix로 저장 — record_deficiency_action이 나중에
+        # 같은 bare deficiency_id로 조치 후 사진을 업로드(upsert)할 때 이 발견 시
+        # 사진 Storage object를 덮어쓰지 않도록 키 충돌을 원천 차단.
+        photo_path = (
+            data._upload_action_photo(f"{new_def_id}-disc", _action_photos[0].getvalue())
+            if len(_action_photos) >= 1 else None
+        )
+        photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-disc2", _action_photos[1].getvalue())
+            if len(_action_photos) >= 2 else None
+        )
 
-        insp_photo_bytes = insp_photo.getvalue() if insp_photo else None
-        insp_photo_path = None
-        if insp_photo_bytes:
-            insp_photo_path = data._upload_action_photo(
-                f"{new_def_id}-insp", insp_photo_bytes
-            )
+        _insp_photos = insp_photo or []
+        insp_photo_path = (
+            data._upload_action_photo(f"{new_def_id}-insp", _insp_photos[0].getvalue())
+            if len(_insp_photos) >= 1 else None
+        )
+        insp_photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-insp2", _insp_photos[1].getvalue())
+            if len(_insp_photos) >= 2 else None
+        )
 
         # issue 텍스트 — 사유 카탈로그가 있으면 사유 요약, 없으면 자유 입력
         if result == "불량" and matching_kind_for_codes:
@@ -1612,12 +1649,15 @@ def task_inspect_inline(task_id: str) -> None:
             # 채워야 별지6(조치 결과 사진 컬럼)이 계속 사진을 보여준다. 즉시조치가 아니면 None으로
             # 시작해, 나중에 [작업 조치 관리] record_deficiency_action이 조치 후 사진으로 채운다.
             action_photo_path=(photo_path if action_immediate else None),
+            action_photo_path2=(photo_path2 if action_immediate else None),
             submitter=inspector,
             defect_codes=defect_codes_selected,  # v1.6
             defect_other=defect_other_text.strip(),  # v1.6
             checklist_items=checklist_items,  # v1.7
             photo_path=photo_path,                    # 발견 시(조치 전) 사진
+            photo_path2=photo_path2,                   # 발견 시(조치 전) 사진 2번째
             inspection_photo_path=insp_photo_path,     # 결과 무관 점검사진
+            inspection_photo_path2=insp_photo_path2,   # 결과 무관 점검사진 2번째
         ))
 
         # 장비 health_status 갱신 (있으면)

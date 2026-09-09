@@ -59,6 +59,9 @@ create table if not exists public.deficiencies (
   checklist_items  jsonb not null default '{}',      -- v1.7: 세부 항목별 상태 (OK/NG/NA)
   photo_path            text,  -- 조치 전(발견 시) 사진 — 기존 action_photo_path와 분리
   inspection_photo_path  text,  -- 결과 무관 점검사진 (양호 포함)
+  photo_path2            text,  -- 조치 전 사진 2번째 (최대 2장)
+  action_photo_path2     text,  -- 조치 후 사진 2번째
+  inspection_photo_path2 text,  -- 점검사진 2번째
   created_at       timestamptz not null default now()
 );
 

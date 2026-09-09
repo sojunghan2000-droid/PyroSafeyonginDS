@@ -103,7 +103,11 @@ def _render_table_header() -> None:
     # 통보서 컬럼 헤더에 ? 팝오버 (시설 관리와 동일 패턴)
     st.markdown(
         "<style>"
-        ".st-key-defhdr [data-testid='stPopoverButton'] svg{display:none!important;}"
+        ".st-key-defhdr.st-key-defhdr [data-testid='stPopoverButton'] svg,"
+        ".st-key-defhdr.st-key-defhdr [data-testid='stPopoverButton'] [data-testid='stIconMaterial'][data-testid='stIconMaterial'],"
+        ".st-key-defhdr.st-key-defhdr [data-testid='stPopoverButton'] div[aria-hidden='true'][aria-hidden='true']"
+        "{display:none!important;visibility:hidden!important;width:0!important;"
+        "height:0!important;overflow:hidden!important;opacity:0!important;}"
         ".st-key-defhdr [data-testid='stPopoverButton']{"
         "background:#F1F5F9!important;border:1px solid #E2E8F0!important;"
         "box-shadow:none!important;border-radius:50%!important;"
