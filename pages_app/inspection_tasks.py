@@ -145,31 +145,18 @@ def _round_detail_dialog(round_id: str) -> None:
     _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
     with c_cancel:
         _cancel_supported = data.round_cancel_supported()
-        _has_completed = any(t.status == "Completed" for t in tasks_all)
-        if _cancel_supported and not r.cancelled and not _has_completed:
-            # 완료 Task가 하나도 없는 회차 — 사유 입력 없이 즉시 삭제(취소+숨김)
-            if st.button("삭제", key=f"round_delete_{round_id}",
-                         use_container_width=True,
-                         help="완료된 점검이 없는 회차를 즉시 삭제(숨김)합니다."):
-                _delete_by = (auth.current_user() or {}).get("name") or "관리자"
-                if data.delete_round(round_id, _delete_by):
-                    st.success(f"{round_id} 삭제되었습니다.")
-                    st.rerun()
-                else:
-                    st.error("삭제할 수 없는 회차입니다.")
+        can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
+        if can_cancel:
+            if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
+                         use_container_width=True):
+                st.session_state[f"round_cancel_open_{round_id}"] = True
         else:
-            can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
-            if can_cancel:
-                if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
-                             use_container_width=True):
-                    st.session_state[f"round_cancel_open_{round_id}"] = True
-            else:
-                _cancel_help = (
-                    "회차 취소 컬럼 마이그레이션이 필요합니다." if not _cancel_supported
-                    else "완료·기취소 회차는 취소할 수 없습니다."
-                )
-                st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
-                          use_container_width=True, disabled=True, help=_cancel_help)
+            _cancel_help = (
+                "회차 취소 컬럼 마이그레이션이 필요합니다." if not _cancel_supported
+                else "완료·기취소 회차는 취소할 수 없습니다."
+            )
+            st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
+                      use_container_width=True, disabled=True, help=_cancel_help)
     with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
@@ -264,7 +251,43 @@ def _round_detail_dialog(round_id: str) -> None:
             )
             # 결과 컬럼 — Completed Task에만 inline 결과 카드 (한 행 안에 모든 정보)
             with row[4]:
-                if t.status == "Completed":
+                # 오동작 우선 확인 (Malfunction)
+                mal_match = (
+                    next(
+                        (m for m in data.load_malfunctions()
+                         if m.task_id == t.task_id), None,
+                    )
+                    if t.status == "Completed" else None
+                )
+                if mal_match:
+                    m = mal_match
+                    mal_status = "조치 완료" if m.action_done else "조치 대기"
+                    extra = (
+                        f"<div style='color:#92400E; font-size:0.78rem; "
+                        f"margin-top:0.15rem;'>⚠️ {m.detail}</div>"
+                    )
+                    if m.action_done and m.action_note:
+                        extra += (
+                            f"<div style='color:#15803D; font-size:0.78rem; "
+                            f"margin-top:0.1rem;'>✅ {m.action_note}</div>"
+                        )
+                    st.markdown(
+                        f"<div style='padding:0.35rem 0.55rem; background:#F8FAFC; "
+                        f"border-left:3px solid #DC2626; border-radius:6px;'>"
+                        f"<span style='background:#FEE2E2; color:#DC2626; "
+                        f"padding:0.05rem 0.45rem; border-radius:999px; "
+                        f"font-size:0.72rem; font-weight:700;'>오동작</span> "
+                        f"<span style='background:#FEF3C7; color:#92400E; "
+                        f"padding:0.05rem 0.4rem; border-radius:999px; "
+                        f"font-size:0.7rem; font-weight:600; margin-left:0.2rem;'>"
+                        f"{mal_status}</span>"
+                        f"<span style='color:#475569; font-size:0.78rem; "
+                        f"margin-left:0.3rem;'>"
+                        f"{m.confirmer or '-'} · {fmt_date(m.occurred_on)} · {m.category}"
+                        f"</span>{extra}</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif t.status == "Completed":
                     d = def_by_task.get(t.task_id)
                     if d:
                         is_good = (d.resolution == "완료" and not d.notice_no)
@@ -425,26 +448,31 @@ def render() -> None:
             "안전점검 회차(Round) 단위로 점검을 진행합니다. 회차 [상세]에서 [점검 시작]으로 별지5 결과를 기록하세요.",
         )
     new_task_clicked = False
+    mal_clicked = False
     with action_col:
-        # 상단 2버튼 — 높이 통일 + 글자 길면 자동 줄바꿈 (잘림 방지)
+        # 상단 3버튼 — 높이 통일 + 글자 길면 자동 줄바꿈 (잘림 방지)
         st.markdown(
             "<style>"
-            ".st-key-open_new_task button,"
+            ".st-key-open_new_task button,.st-key-open_new_malfunction_insp button,"
             ".st-key-audit_log_export button{"
             "white-space:normal!important;min-height:3.1rem;height:100%;"
             "line-height:1.2;padding:0.3rem 0.4rem!important;}"
-            ".st-key-open_new_task button p,"
+            ".st-key-open_new_task button p,.st-key-open_new_malfunction_insp button p,"
             ".st-key-audit_log_export button p{white-space:normal!important;"
             "word-break:keep-all;}"
             "</style>",
             unsafe_allow_html=True,
         )
-        b1, b2 = st.columns(2)
+        b1, b2, b3 = st.columns(3)
         with b1:
             if st.button("신규 일정 등록", type="primary",
                          use_container_width=True, key="open_new_task"):
                 new_task_clicked = True
         with b2:
+            if st.button("오동작 등록", use_container_width=True,
+                         key="open_new_malfunction_insp"):
+                mal_clicked = True
+        with b3:
             st.download_button(
                 "감사 로그 내보내기",
                 data=_audit_log_xlsx(),
@@ -470,6 +498,13 @@ def render() -> None:
 
     if new_task_clicked:
         task_dialog()
+
+    # 오동작 등록 — 안전점검 우상단 진입점 (v1.5+)
+    if mal_clicked:
+        from lib.inspection_dialog import malfunction_dialog
+        malfunction_dialog()
+    if st.session_state.pop("just_submitted_malfunction", False):
+        st.success("오동작이 별지9에 등록되었습니다. [작업 조치 관리]에서 조치 입력하세요.")
 
     # 회차 상세 내 [점검 시작] 클릭 시 띄울 모달
     open_task = st.session_state.pop("_open_task_inspect", None)
