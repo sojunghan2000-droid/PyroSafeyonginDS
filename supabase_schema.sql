@@ -18,6 +18,7 @@ create table if not exists public.equipment (
   pixel_x        double precision not null default 0,
   pixel_y        double precision not null default 0,
   inspection_types jsonb not null default '[]'::jsonb,
+  active         boolean not null default true,
   created_at     timestamptz not null default now()
 );
 
@@ -35,7 +36,7 @@ create table if not exists public.inspection_tasks (
   created_at      timestamptz not null default now()
 );
 
--- 3) 별지5 지적사항
+-- 3) 별지5 지적사항 (v1.5: 별지6 조치 단계 흡수 / v1.5+: 불량 사유 카탈로그 / v1.7: 세부 checklist)
 create table if not exists public.deficiencies (
   deficiency_id    text primary key,
   inspection_date  date not null,
@@ -47,6 +48,20 @@ create table if not exists public.deficiencies (
   resolution       text not null,                    -- 완료 | 불가
   confirmer        text,
   notice_no        text,
+  task_id          text,                             -- v1.5: 점검 회차 Task FK
+  submitter        text,                             -- v1.5: 점검자(발급자)
+  action_done      boolean not null default false,   -- v1.5: 조치 완료 여부
+  action_at        date,
+  action_note      text not null default '',
+  action_photo_path text,
+  defect_codes     text[] not null default '{}',     -- v1.5+: 불량 사유 코드 (multiselect)
+  defect_other     text not null default '',         -- v1.5+: "기타" 선택 시 상세
+  checklist_items  jsonb not null default '{}',      -- v1.7: 세부 항목별 상태 (OK/NG/NA)
+  photo_path            text,  -- 조치 전(발견 시) 사진 — 기존 action_photo_path와 분리
+  inspection_photo_path  text,  -- 결과 무관 점검사진 (양호 포함)
+  photo_path2            text,  -- 조치 전 사진 2번째 (최대 2장)
+  action_photo_path2     text,  -- 조치 후 사진 2번째
+  inspection_photo_path2 text,  -- 점검사진 2번째
   created_at       timestamptz not null default now()
 );
 
@@ -68,7 +83,7 @@ create table if not exists public.notices (
   created_at        timestamptz not null default now()
 );
 
--- 5) 별지9 오동작
+-- 5) 별지9 오동작 (v1.5+: 등록/조치 분리)
 create table if not exists public.malfunctions (
   malfunction_id text primary key,
   category       text not null,
@@ -76,8 +91,25 @@ create table if not exists public.malfunctions (
   detail         text not null,
   action         text not null default '',
   confirmer      text not null default '',
+  task_id        text,                                -- v1.5+: 점검 회차 Task FK
+  action_done    boolean not null default false,      -- v1.5+: 조치 완료 여부
+  action_at      date,
+  action_note    text not null default '',
   created_at     timestamptz not null default now()
 );
+
+-- 6) 점검 유형 카탈로그 (v1.8: 관리자 점검 유형 관리 — 추가/비활성/삭제)
+create table if not exists public.inspection_types (
+  name       text primary key,          -- 유형 이름. 장비·회차가 이름으로 참조
+  is_active  boolean not null default true,
+  is_builtin boolean not null default false,
+  sort_order int not null default 100,
+  created_at timestamptz not null default now()
+);
+insert into public.inspection_types (name, is_builtin, sort_order) values
+  ('일일 점검', true, 1), ('주간 점검', true, 2), ('월간 점검', true, 3),
+  ('분기 점검', true, 4), ('연간 점검', true, 5)
+on conflict (name) do nothing;
 
 -- RLS: 활성화만 하고 정책을 만들지 않음 → anon/authenticated 직접 접근 전부 차단
 alter table public.equipment        enable row level security;
@@ -85,3 +117,34 @@ alter table public.inspection_tasks enable row level security;
 alter table public.deficiencies     enable row level security;
 alter table public.notices          enable row level security;
 alter table public.malfunctions     enable row level security;
+alter table public.inspection_types enable row level security;
+
+-- 7) 회차 취소 컬럼 (v1.8) — inspection_rounds 기본 테이블은 별도 관리(앱 생성).
+--    이 프로젝트의 회차 테이블에 취소 플래그/사유를 추가한다.
+alter table public.inspection_rounds
+  add column if not exists cancelled     boolean     not null default false,
+  add column if not exists cancel_reason text,
+  add column if not exists cancelled_at  timestamptz,
+  add column if not exists cancelled_by  text,
+  add column if not exists archived      boolean     not null default false;  -- v1.8: 취소 회차 숨김
+
+-- 8) 점검 유형 명칭 변경 함수 (v1.8) — 이름 변경 시 참조를 원자적으로 연쇄 갱신
+create or replace function public.rename_inspection_type(old_name text, new_name text)
+returns void language plpgsql as $$
+begin
+  new_name := btrim(new_name);
+  if new_name = '' then raise exception 'empty name'; end if;
+  if not exists (select 1 from public.inspection_types where name = old_name) then
+    raise exception 'type not found: %', old_name;
+  end if;
+  if exists (select 1 from public.inspection_types where name = new_name) then
+    raise exception 'name exists: %', new_name;
+  end if;
+  update public.inspection_types  set name = new_name       where name = old_name;
+  update public.inspection_rounds set task_type = new_name  where task_type = old_name;
+  update public.inspection_tasks  set task_type = new_name  where task_type = old_name;
+  update public.equipment set inspection_types = (
+      select jsonb_agg(case when t = old_name then new_name else t end)
+      from jsonb_array_elements_text(inspection_types) t)
+    where inspection_types ? old_name;
+end $$;

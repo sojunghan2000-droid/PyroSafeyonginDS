@@ -11,7 +11,6 @@ import streamlit as st
 from lib import data
 from lib.data import (
     Deficiency, Equipment, InspectionRound, InspectionTask, Malfunction, Notice,
-    TASK_INSPECTION_TYPES,
     add_deficiency, add_equipment, add_malfunction, add_notice,
     add_round, add_task,
     default_inspection_types_for,
@@ -30,11 +29,17 @@ EQ_CATEGORIES = [
     "확산소화기", "유도등", "스프링클러", "소화전", "기타",
 ]
 
-# 등록 가능한 층
+# 등록 가능한 층 (구 명칭 — 일부 로직 호환용)
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
+# 실제 도면 PNG(assets/floors)가 있는 8개 층 — 신규 위치 생성 좌표 픽업용
+SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
 
 
-INSPECTION_TYPES = ["임시소방시설", "피난로 등", "화기취급감독"]
+INSPECTION_TYPES = [
+    "임시소방시설", "피난로 등", "화기취급감독",
+    # v1.6: 신규 점검 종류 (불량 사유 카탈로그 보유)
+    "화기작업구간 점검", "가설컨테이너 사무실 점검",
+]
 
 # 별지9 카테고리 (임시소방시설 6종 + 그 외 6종)
 MAL_CATEGORIES_TEMP = ["소화기", "간이소화장치", "비상경보장치",
@@ -91,6 +96,45 @@ def new_inspection_dialog() -> None:
         placeholder="해당 점검종류를 선택하세요 (복수 가능)",
     )
 
+    # === 점검 회차 연결 (v1.7) — 진행 중 점검이 여러 개면 어느 회차인지 선택 ===
+    _open_tasks = [
+        t for t in data.load_tasks()
+        if t.round_id and not t.excluded and t.equipment_label
+        and eq.location_id in t.equipment_label
+        and t.status not in ("Completed",)
+    ]
+    selected_task_id: str | None = None
+    if len(_open_tasks) == 1:
+        _ot = _open_tasks[0]
+        selected_task_id = _ot.task_id
+        st.caption(f"🔗 이 점검은 **{_ot.round_id}** ({_ot.task_type}) 회차에 연결됩니다.")
+    elif len(_open_tasks) >= 2:
+        from lib.ui import TASK_STATUS_KO
+        _NONE_ROUND = "__none__"
+        st.markdown(
+            "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
+            "어느 회차 점검인가요?</b>", unsafe_allow_html=True,
+        )
+        st.caption(
+            f"이 장비에 진행 중인 점검이 {len(_open_tasks)}건입니다. "
+            "결과를 연결할 회차를 선택하세요."
+        )
+
+        def _fmt_round(tid: str) -> str:
+            if tid == _NONE_ROUND:
+                return "— 회차 미연결 (단독 기록) —"
+            t = next(x for x in _open_tasks if x.task_id == tid)
+            return (f"{t.round_id} · {t.task_type} · 마감 {fmt_date(t.due_date)} "
+                    f"({TASK_STATUS_KO.get(t.status, t.status)})")
+
+        _pick = st.radio(
+            "회차 선택",
+            options=[t.task_id for t in _open_tasks] + [_NONE_ROUND],
+            format_func=_fmt_round, key="dlg_round_pick",
+            label_visibility="collapsed",
+        )
+        selected_task_id = None if _pick == _NONE_ROUND else _pick
+
     st.markdown("<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>점검 결과</b>",
                 unsafe_allow_html=True)
     result = st.radio("결과", ["양호", "불량"], horizontal=True,
@@ -100,9 +144,20 @@ def new_inspection_dialog() -> None:
     action_immediate = False
     action_note_now = ""
     action_photo_now = None
+    before_photo_now = None
     confirmer = inspector
+    is_container = data.INSPECTION_KIND_CONTAINER in types_selected
 
     if result == "불량":
+        before_photo_now = photo_input(
+            "조치 전 사진" + (" *" if is_container else " (선택)"),
+            key="dlg_before_photo",
+            help_text=(
+                "가설컨테이너 사무실 점검은 조치 전 사진이 필수입니다. "
+                if is_container else ""
+            ) + "최대 2장. 휴대폰·태블릿은 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+            max_files=2,
+        )
         issue = st.text_area("지적사항",
                              placeholder="예: 1-A계단 피난구 유도등 점등 불량",
                              key="dlg_issue")
@@ -141,16 +196,13 @@ def new_inspection_dialog() -> None:
         if result == "불량" and not issue.strip():
             st.error("불량인 경우 지적사항을 입력해 주세요.")
             return
+        if result == "불량" and is_container and not before_photo_now:
+            st.error("가설컨테이너 사무실 점검은 조치 전 사진 없이는 저장할 수 없습니다.")
+            return
 
-        # 이 장비의 활성 회차에서 미완료 Task 자동 매핑 (있으면)
-        matched_task_id: str | None = None
-        for t in data.load_tasks():
-            if (t.round_id and not t.excluded
-                    and t.equipment_label
-                    and eq.location_id in t.equipment_label
-                    and t.status not in ("Completed",)):
-                matched_task_id = t.task_id
-                break
+        # 회차 연결 — 렌더 시 결정된 선택값 사용
+        # (진행 중 점검 1건=자동 / 2건 이상=사용자가 위에서 선택 / 0건=None)
+        matched_task_id: str | None = selected_task_id
 
         new_no = None
         if result == "불량":
@@ -172,6 +224,15 @@ def new_inspection_dialog() -> None:
             ))
 
         new_def_id = data.next_deficiency_id()
+        _before_files = before_photo_now or []
+        before_photo_path = (
+            data._upload_action_photo(f"{new_def_id}-disc", _before_files[0].getvalue())
+            if len(_before_files) >= 1 else None
+        )
+        before_photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-disc2", _before_files[1].getvalue())
+            if len(_before_files) >= 2 else None
+        )
         add_deficiency(Deficiency(
             deficiency_id=new_def_id,
             inspection_date=inspect_date, inspector=inspector,
@@ -182,6 +243,8 @@ def new_inspection_dialog() -> None:
             confirmer=confirmer if (result == "양호" or action_immediate) else None,
             notice_no=new_no,
             task_id=matched_task_id,
+            photo_path=before_photo_path,
+            photo_path2=before_photo_path2,
         ))
 
         # 장비의 최근 점검일·건강 상태 갱신 (KPI 카드 즉시 반영)
@@ -197,7 +260,7 @@ def new_inspection_dialog() -> None:
 
 
 def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
-    """[+ Task 추가] 모달의 도면 선택 탭. 회차 매칭 장비 + 빈 spot 마커 + 단일 클릭 선택.
+    """[+ Task 추가] 모달의 신규 위치 점검 탭(도면). 회차 매칭 장비 + 빈 spot 마커 + 단일 클릭 선택.
     candidates: 회차 매칭 후보 장비 (미포함만). all_eq: 전체 장비.
     already_locs: 이미 회차에 포함된 location_id 집합.
     반환: 선택된 항목 dict ({'type': 'equipment'|'empty_spot', 'data': ...}) 또는 None.
@@ -206,7 +269,7 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
-        control_toggle, floor_legend_html, plotly_config,
+        control_toggle, legend_html, plotly_config,
     )
 
     ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
@@ -242,7 +305,11 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             help="ON 시 도면 빈 곳 클릭으로 신규 위치 좌표 픽업 (기본 OFF)",
         )
     with lc:
-        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+        st.markdown(legend_html([
+            ("#2563EB", "점검 대상 (회차 매칭)"),
+            ("#94A3B8", "그 외 선택 가능 (● 장비 · ◇ 빈/신규 위치)"),
+            ("#64748B", "이미 포함 (선택 불가)"),
+        ]), unsafe_allow_html=True)
 
     img_path = ASSETS_DIR / f"{floor}.png"
     if not img_path.exists():
@@ -287,8 +354,8 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
                 x=nomat_xs, y=nomat_ys, mode="markers+text",
                 text=nomat_txt, textposition="top center",
                 textfont=dict(size=10, color="#475569"),
-                marker=dict(size=16, color="#CBD5E1",
-                            line=dict(color="#94A3B8", width=1.5)),
+                marker=dict(size=16, color="#94A3B8",
+                            line=dict(color="#FFFFFF", width=1.5)),
                 customdata=nomat_cd,
                 hovertemplate=(
                     "<b>%{customdata[1]}</b> (매핑 외 · 자유 추가)<br>"
@@ -389,9 +456,9 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         fig.add_trace(go.Scatter(
             x=xs, y=ys, mode="markers+text",
             text=txts, textposition="bottom center",
-            textfont=dict(size=9, color="#1D4ED8"),
-            marker=dict(size=14, color="#3B82F6",
-                        line=dict(color="#1E40AF", width=2),
+            textfont=dict(size=9, color="#64748B"),
+            marker=dict(size=14, color="#94A3B8",
+                        line=dict(color="#64748B", width=2),
                         symbol="diamond-open"),
             customdata=custom,
             hovertemplate=(
@@ -507,9 +574,12 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             f"</div>",
             unsafe_allow_html=True,
         )
+        _desc_key = f"add_tsk_temp_desc_{round_id}"
+        if _desc_key not in st.session_state:
+            st.session_state[_desc_key] = "좌표 참고"  # 기본값 (수정 가능)
         desc = st.text_input(
             "위치 설명 (room_name) *",
-            key=f"add_tsk_temp_desc_{round_id}",
+            key=_desc_key,
             placeholder="예: 4F 동측 출입구 옆",
         )
         bcols = st.columns([1, 1])
@@ -548,17 +618,243 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
         )
     else:
         st.caption(
-            "🔵 파란 원 = 매칭 장비 · ⚪ 옅은 회색 원 = 매핑 외(자유 추가) · "
-            "⚫ 진회색 = 이미 포함 · ◇ 회색 다이아 = 빈 spot · 🔷 파란 다이아 = 신규 위치 · "
-            "신규 위치를 새로 만들려면 상단 토글 활성화"
+            "🆕 신규 위치를 새로 만들려면 상단 **신규 위치 추가** 토글을 켜세요. "
+            "(마커 색 설명은 위 범례 참고)"
         )
     return None
+
+
+def _location_map_picker(key_prefix: str, highlight_category: str | None = None):
+    """회차 컨텍스트 없는 범용 위치 픽커. 도면에서 장비/빈 spot 1건 선택.
+    반환: {"floor","zone","spot_id","label"} 또는 None(미선택).
+    highlight_category와 category가 일치하는 장비를 파란색 강조."""
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import (
+        control_toggle, legend_html, plotly_config, lock_overlay_css,
+    )
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+
+    all_eq = data.load_equipment()
+    all_spots = data.load_spots()
+    floors = sorted({e.floor for e in all_eq if e.floor} | {s.floor for s in all_spots})
+    if not floors:
+        st.info("도면을 표시할 수 있는 층이 없습니다.")
+        return st.session_state.get(f"{key_prefix}_picked")
+
+    floor = st.selectbox("층", options=floors, key=f"{key_prefix}_floor")
+
+    cc, lc = st.columns([1.2, 5])
+    with cc:
+        locked = control_toggle(f"{key_prefix}_lock", default_locked=True)
+    with lc:
+        st.markdown(legend_html([
+            ("#2563EB", "분류 일치 장비"),
+            ("#94A3B8", "그 외 장비 · ◇ 빈 위치"),
+        ]), unsafe_allow_html=True)
+
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.warning(f"{floor} 도면 이미지가 없습니다.")
+        return st.session_state.get(f"{key_prefix}_picked")
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    spots = {s.spot_id: s for s in data.load_spots(floor)}
+    floor_eq = [e for e in all_eq if e.floor == floor and e.spot_id in spots]
+    match_xs, match_ys, match_txt, match_cd = [], [], [], []
+    nomat_xs, nomat_ys, nomat_txt, nomat_cd = [], [], [], []
+    for e in floor_eq:
+        sp = spots.get(e.spot_id)
+        if not sp:
+            continue
+        x = sp.x_pct / 100 * FIG_W
+        y = FIG_H - sp.y_pct / 100 * FIG_H
+        txt = e.equipment_id.split("-")[-1]
+        cd = ("eq", e.spot_id, e.zone, e.equipment_name, e.equipment_id)
+        if highlight_category and e.category == highlight_category:
+            match_xs.append(x); match_ys.append(y)
+            match_txt.append(txt); match_cd.append(cd)
+        else:
+            nomat_xs.append(x); nomat_ys.append(y)
+            nomat_txt.append(txt); nomat_cd.append(cd)
+    if nomat_xs:
+        fig.add_trace(go.Scatter(
+            x=nomat_xs, y=nomat_ys, mode="markers+text",
+            text=nomat_txt, textposition="top center",
+            textfont=dict(size=10, color="#475569"),
+            marker=dict(size=16, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5)),
+            customdata=nomat_cd,
+            hovertemplate=("<b>%{customdata[3]}</b><br>"
+                           "%{customdata[2]} · %{customdata[4]}<extra></extra>"),
+            showlegend=False,
+        ))
+    if match_xs:
+        fig.add_trace(go.Scatter(
+            x=match_xs, y=match_ys, mode="markers+text",
+            text=match_txt, textposition="top center",
+            textfont=dict(size=10, color="#0F172A"),
+            marker=dict(size=18, color="#2563EB",
+                        line=dict(color="#FFFFFF", width=2)),
+            customdata=match_cd,
+            hovertemplate=("<b>%{customdata[3]}</b> (분류 일치)<br>"
+                           "%{customdata[2]} · %{customdata[4]}<extra></extra>"),
+            showlegend=False,
+        ))
+
+    used = {e.spot_id for e in all_eq if e.spot_id and e.floor == floor}
+    empty = [s for s in spots.values() if s.spot_id not in used]
+    if empty:
+        xs, ys, cd = [], [], []
+        for sp in empty:
+            xs.append(sp.x_pct / 100 * FIG_W)
+            ys.append(FIG_H - sp.y_pct / 100 * FIG_H)
+            cd.append(("spot", sp.spot_id, sp.room_name, "빈 위치", sp.spot_id))
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers",
+            marker=dict(size=14, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5), symbol="diamond"),
+            customdata=cd,
+            hovertemplate=("<b>%{customdata[2]}</b> (빈 위치)<br>"
+                           "%{customdata[1]}<extra></extra>"),
+            showlegend=False,
+        ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="#F8FAFC", height=480,
+        dragmode="pan", showlegend=False,
+        clickmode="event+select",
+        uirevision=f"{key_prefix}_{floor}",
+    )
+    if locked:
+        lock_overlay_css()
+    event = st.plotly_chart(
+        fig, use_container_width=True, config=plotly_config(),
+        on_select="rerun", selection_mode=["points"],
+        key=f"{key_prefix}_chart_{floor}",
+    )
+
+    picked_key = f"{key_prefix}_picked"
+    if (not locked and event and getattr(event, "selection", None)
+            and getattr(event.selection, "points", None)):
+        pt = event.selection.points[-1]
+        cd = pt.get("customdata")
+        if cd:
+            _kind, spot_id, zone, name, _ident = cd
+            st.session_state[picked_key] = {
+                "floor": floor, "zone": zone, "spot_id": spot_id,
+                "label": f"{floor} / {zone} · {name}",
+            }
+    return st.session_state.get(picked_key)
+
+
+def _spot_preview_map(sel_spot) -> None:
+    """'기존 위치 선택'에서 고른 spot 위치를 도면 위에 보여주는 읽기전용 미리보기.
+
+    선택 spot = 파란 별(★), 같은 층의 다른 spot = 옅은 회색 ◇, 기존 장비 = 옅은 회색 ●.
+    클릭·선택·세션상태 변경 없음(정적).
+    """
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import plotly_config
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+
+    floor = sel_spot.floor
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.warning(f"{floor} 도면 이미지가 없습니다.")
+        return
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    spots = data.load_spots(floor)
+    floor_eq = [e for e in data.load_equipment() if e.floor == floor and e.spot_id]
+    spot_by_id = {s.spot_id: s for s in spots}
+
+    def _xy(x_pct, y_pct):
+        return x_pct / 100 * FIG_W, FIG_H - y_pct / 100 * FIG_H
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    # 맥락 1: 같은 층의 다른 spot (선택 제외) — 옅은 회색 다이아
+    ox, oy, ot = [], [], []
+    for s in spots:
+        if s.spot_id == sel_spot.spot_id:
+            continue
+        x, y = _xy(s.x_pct, s.y_pct)
+        ox.append(x); oy.append(y); ot.append(f"{s.room_name} ({s.spot_id})")
+    if ox:
+        fig.add_trace(go.Scatter(
+            x=ox, y=oy, mode="markers", text=ot,
+            marker=dict(size=13, color="#94A3B8",
+                        line=dict(color="#FFFFFF", width=1.5), symbol="diamond"),
+            hovertemplate="%{text}<extra></extra>", showlegend=False,
+        ))
+
+    # 맥락 2: 같은 층 기존 장비 — 옅은 회색 원
+    ex, ey, et = [], [], []
+    for e in floor_eq:
+        sp = spot_by_id.get(e.spot_id)
+        if not sp:
+            continue
+        x, y = _xy(sp.x_pct, sp.y_pct)
+        ex.append(x); ey.append(y); et.append(f"{e.equipment_name} ({e.equipment_id})")
+    if ex:
+        fig.add_trace(go.Scatter(
+            x=ex, y=ey, mode="markers", text=et,
+            marker=dict(size=11, color="#CBD5E1",
+                        line=dict(color="#FFFFFF", width=1), symbol="circle"),
+            hovertemplate="%{text}<extra></extra>", showlegend=False,
+        ))
+
+    # 선택 spot — 파란 별 강조
+    sx, sy = _xy(sel_spot.x_pct, sel_spot.y_pct)
+    fig.add_trace(go.Scatter(
+        x=[sx], y=[sy], mode="markers",
+        text=[f"{sel_spot.room_name} ({sel_spot.spot_id})"],
+        marker=dict(size=24, color="#2563EB",
+                    line=dict(color="#FFFFFF", width=2), symbol="star"),
+        hovertemplate="<b>%{text}</b><extra></extra>", showlegend=False,
+    ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="#F8FAFC", height=360,
+        dragmode=False, showlegend=False,
+        uirevision=f"spot_preview_{floor}",
+    )
+    st.plotly_chart(
+        fig, use_container_width=True, config=plotly_config(),
+        key=f"spot_preview_{sel_spot.spot_id}",
+    )
 
 
 @st.dialog("회차에 Task 추가", width="large")
 def add_task_to_round_dialog(round_id: str) -> None:
     """v1.5 자유 점검 회차에 Task 1건 동적 추가.
-    진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 3가지."""
+    진입 방식 — 장비 선택(QR+목록 통합) / 📍 신규 위치 점검(도면) 2가지 (v1.7)."""
     r = data.get_round(round_id)
     if not r:
         st.error("회차를 찾을 수 없습니다.")
@@ -583,7 +879,8 @@ def add_task_to_round_dialog(round_id: str) -> None:
     }
 
     def _is_match(e):
-        return (r.task_type in TASK_INSPECTION_TYPES
+        # 전체 유형(활성+비활성)으로 검증 — 과거/비활성 유형 회차 매칭 유지
+        return (r.task_type in data.load_inspection_types()
                 and r.task_type in (e.inspection_types or []))
 
     matched = [e for e in all_eq
@@ -592,11 +889,30 @@ def add_task_to_round_dialog(round_id: str) -> None:
                  if e.location_id not in already_locs and not _is_match(e)]
     candidates = matched + unmatched  # 매칭 우선 정렬
 
-    # 진입 방식 — 직접 선택 / QR 스캔 / 📍 도면 선택 (모바일 친화)
-    tab_pick, tab_qr, tab_map = st.tabs(["직접 선택", "QR 스캔", "📍 도면 선택"])
+    # 진입 방식 — 장비 선택(사전 위치 설정됨) / 📍 신규 위치 점검(도면)
+    # v1.7: '직접 선택'과 'QR 스캔'은 둘 다 등록 장비를 고르는 동일 흐름이라 한 탭으로 통합.
+    #        화기작업 구간은 별도 탭 없이 '신규 위치 점검 → 신규 위치'로 통합 (탭 중복 제거)
+    # v1.8: st.tabs → st.radio — 토글 등 rerun 시에도 선택 탭 유지(세션 저장). 활성 탭만 실행
+    _section = st.radio(
+        "진입 방식",
+        ["장비 선택 (사전 위치 설정됨)", "신규 위치 점검"],
+        horizontal=True, label_visibility="collapsed",
+        key=f"add_tsk_section_{round_id}",
+    )
     sel_eq = None        # Equipment (장비 기반 추가)
     sel_empty_spot = None  # Spot (빈 spot 기반 추가)
-    with tab_pick:
+    if _section == "장비 선택 (사전 위치 설정됨)":
+        st.caption(
+            "등록된 장비를 **목록** 또는 **QR 스캔**으로 선택합니다. "
+            "장비의 층·구역은 이미 설정되어 있어 자동 반영됩니다."
+        )
+        st.caption(
+            "💡 도면에 정의되지 않은 작업 구간(화기작업 등)은 "
+            "**신규 위치 점검 탭 → 🆕 신규 위치 추가**로 등록할 수 있습니다."
+        )
+
+        # 1) 목록에서 직접 선택 (기본 경로)
+        st.markdown("**① 목록에서 선택**")
         eq_idx = st.selectbox(
             "추가할 장비 (매칭 우선 · 매핑 외 장비도 자유 추가 가능)",
             options=range(len(candidates)),
@@ -607,14 +923,17 @@ def add_task_to_round_dialog(round_id: str) -> None:
             ),
             key=f"add_tsk_eq_{round_id}",
         )
-        sel_eq = candidates[eq_idx]
-    with tab_qr:
-        st.caption("장비에 부착된 QR을 카메라로 비추면 해당 장비가 자동 선택됩니다.")
+        sel_eq = candidates[eq_idx] if candidates else None
+
+        st.divider()
+
+        # 2) QR 스캔 (모바일 · 인식 시 목록 선택보다 우선 적용)
+        st.markdown("**② QR 스캔** (선택)")
         try:
             from streamlit_qrcode_scanner import qrcode_scanner
             qr_val = qrcode_scanner(key=f"add_tsk_qr_{round_id}")
         except Exception as e:
-            st.error(f"QR 스캐너를 불러올 수 없습니다 ({e}). 직접 선택 탭을 이용해 주세요.")
+            st.caption(f"QR 스캐너를 불러올 수 없습니다 ({e}). 위 목록에서 선택하세요.")
             qr_val = None
         manual = st.text_input(
             "수동 입력 (EQ-NNNN 또는 QR 페이로드 URL)",
@@ -635,13 +954,15 @@ def add_task_to_round_dialog(round_id: str) -> None:
             return m.group(0) if m else None
 
         eq_id = _extract(qr_val) or _extract(manual)
+
+        # QR/수동 인식 시 목록 선택보다 우선 적용
         if eq_id:
             matched = next((c for c in candidates if c.equipment_id == eq_id), None)
             if matched:
                 sel_eq = matched
                 st.success(
-                    f"인식: {matched.equipment_id} · {matched.equipment_name} "
-                    f"({matched.location_id})"
+                    f"QR 인식: {matched.equipment_id} · {matched.equipment_name} "
+                    f"({matched.location_id}) — 이 장비로 추가됩니다."
                 )
             else:
                 # 회차 후보에는 없지만 전체 장비에 있는 경우
@@ -658,7 +979,7 @@ def add_task_to_round_dialog(round_id: str) -> None:
                 else:
                     st.error(f"장비를 찾을 수 없습니다: {eq_id}")
 
-    with tab_map:
+    else:  # 신규 위치 점검
         picked = _add_task_map_picker(
             round_id, candidates, all_eq, already_locs,
         )
@@ -675,14 +996,17 @@ def add_task_to_round_dialog(round_id: str) -> None:
         placeholder=r.note,
     )
 
-    has_selection = sel_eq is not None or sel_empty_spot is not None
+    has_selection = (
+        sel_eq is not None
+        or sel_empty_spot is not None
+    )
     if st.button(
         "추가", type="primary", use_container_width=True,
         key=f"add_tsk_submit_{round_id}",
         disabled=not has_selection,
     ):
         if not has_selection:
-            st.error("장비를 선택하거나 QR을 인식하거나 빈 spot을 골라 주세요.")
+            st.error("장비/QR/spot 중 하나를 선택해 주세요.")
             return
         from lib.data import next_task_id, add_task, _refresh_round_status
         new_tsk = next_task_id()
@@ -755,10 +1079,11 @@ def action_input_dialog(deficiency_id: str) -> None:
         placeholder="예: 적재물 이동 완료, 전구 교체, 안전핀 재장착 등",
         key=f"act_dlg_note_{deficiency_id}",
     )
-    photo = photo_input(
+    photos = photo_input(
         "조치 결과 사진",
         key=f"act_dlg_photo_{deficiency_id}",
-        help_text="휴대폰·태블릿에서는 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+        help_text="최대 2장. 휴대폰·태블릿에서는 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+        max_files=2,
     )
 
     if st.button(
@@ -768,13 +1093,16 @@ def action_input_dialog(deficiency_id: str) -> None:
         if not action_note.strip():
             st.error("조치 내용을 입력해 주세요.")
             return
-        photo_bytes = photo.getvalue() if photo else None
+        _photos = photos or []
+        photo_bytes = _photos[0].getvalue() if len(_photos) >= 1 else None
+        photo_bytes2 = _photos[1].getvalue() if len(_photos) >= 2 else None
         data.record_deficiency_action(
             deficiency_id=deficiency_id,
             action_at=action_at,
             action_note=action_note.strip(),
             confirmer=confirmer.strip() or "김소장",
             photo=photo_bytes,
+            photo2=photo_bytes2,
         )
         st.session_state["just_recorded_action"] = deficiency_id
         st.rerun()
@@ -835,20 +1163,31 @@ def task_inspect_inline(task_id: str) -> None:
     override_zone = eq.zone if eq else t.zone
     override_label = None  # 사용자 표시용
 
-    with st.expander("장소·구역 정정 (선택)"):
+    # v1.9: Streamlit 1.51은 st.expander에 key를 못 줘 열림 상태가 session_state에
+    # 저장되지 않는다 → 중첩 다이얼로그+동적 도면 환경에서 rerun 시 접히며 "초기화"처럼
+    # 보인다. expanded=True로 고정해 항상 펼쳐두어 접힘/초기화를 원천 차단한다.
+    with st.expander("장소·구역 정정 (선택)", expanded=True):
         st.caption(
             "장비 정보의 층/구역이 맞지 않으면 QR 스캔으로 다른 장비를 인식하거나 "
             "도면의 위치(spot)를 직접 골라 정정합니다. 정정된 값은 별지5 row에 반영됩니다."
         )
-        tab_qr, tab_spot = st.tabs(["QR 스캔", "도면 spot 선택"])
+        # v1.8: st.tabs → st.radio — 토글 rerun 시 선택 탭 유지
+        _sec2 = st.radio(
+            "정정 방식",
+            ["QR 스캔", "도면 spot 선택"],
+            horizontal=True, label_visibility="collapsed",
+            key=f"tsk_loc_section_{task_id}",
+        )
 
         # 1) QR 스캔 정정
-        with tab_qr:
+        if _sec2 == "QR 스캔":
             try:
                 from streamlit_qrcode_scanner import qrcode_scanner
                 qr_val = qrcode_scanner(key=f"tsk_loc_qr_{task_id}")
-            except Exception as e:
-                st.error(f"QR 스캐너를 불러올 수 없습니다 ({e}).")
+            except Exception:
+                st.caption(
+                    "QR 스캐너를 사용할 수 없는 환경입니다. 아래 수동 입력을 이용하세요."
+                )
                 qr_val = None
             qr_manual = st.text_input(
                 "수동 입력 (EQ-NNNN 또는 QR 페이로드 URL)",
@@ -884,12 +1223,12 @@ def task_inspect_inline(task_id: str) -> None:
                     st.warning(f"장비를 찾을 수 없습니다: {picked}")
 
         # 2) 도면 spot 선택 정정 — 실제 도면에서 마커 클릭
-        with tab_spot:
+        else:  # 도면 spot 선택
             import base64
             from pathlib import Path
             import plotly.graph_objects as go
             from lib.floor_widget import (
-                control_toggle, floor_legend_html, lock_overlay_css, plotly_config,
+                control_toggle, legend_html, lock_overlay_css, plotly_config,
             )
 
             all_spots = data.load_spots()
@@ -919,7 +1258,10 @@ def task_inspect_inline(task_id: str) -> None:
                             f"tsk_loc_map_{task_id}", default_locked=True,
                         )
                     with lc:
-                        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+                        st.markdown(legend_html([
+                            ("#2563EB", "현재 선택 위치"),
+                            ("#FDE68A", "다른 spot (클릭해 정정)"),
+                        ]), unsafe_allow_html=True)
 
                     uri = "data:image/png;base64," + base64.b64encode(
                         img_path.read_bytes()).decode()
@@ -938,6 +1280,9 @@ def task_inspect_inline(task_id: str) -> None:
                         parts = override_label.split("→")[1].strip().split(" ")
                         if parts:
                             cur_spot_id = parts[0]
+                    elif eq and eq.spot_id:
+                        # 정정 전 — 장비의 현재 위치를 파란 마커로 표시
+                        cur_spot_id = eq.spot_id
 
                     other_xs, other_ys, other_txt, other_cd = [], [], [], []
                     cur_xs, cur_ys, cur_txt = [], [], []
@@ -1048,13 +1393,77 @@ def task_inspect_inline(task_id: str) -> None:
         placeholder="해당 점검종류를 선택하세요 (복수 가능)",
     )
 
+    # v1.7: 세부 checklist — 점검 종류가 카탈로그 보유 종류면 렌더링
+    # 첫 카탈로그 매칭 종류 기준. 각 항목 OK/NG/NA 라디오.
+    checklist_kind = next(
+        (k for k in types_selected if data.checklist_for(k) is not None),
+        None,
+    )
+    checklist_items: dict[str, str] = {}
+    checklist_has_ng = False
+    if checklist_kind:
+        catalog = data.checklist_for(checklist_kind)
+        st.markdown(
+            f"<div style='background:#EFF6FF; border:1px solid #BFDBFE; "
+            f"border-radius:8px; padding:0.5rem 0.75rem; margin:0.4rem 0; "
+            f"color:#1E40AF; font-size:0.85rem;'>"
+            f"📋 <b>{checklist_kind}</b> — 세부 항목별 점검 (OK / NG / N/A)"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        def _chk_radio(key_id: str, label: str) -> str:
+            # NG 자주 씀 → 명확성 위해 라디오. 기본 OK
+            return st.radio(
+                label,
+                options=["OK", "NG", "N/A"],
+                horizontal=True,
+                key=f"tsk_chk_{task_id}_{key_id}",
+                label_visibility="visible",
+            )
+
+        if isinstance(catalog, dict):
+            # 화기작업 — 카테고리별
+            for cat, items in catalog.items():
+                st.markdown(
+                    f"<div style='font-weight:600; color:#0F172A; "
+                    f"font-size:0.86rem; margin-top:0.4rem;'>· {cat}</div>",
+                    unsafe_allow_html=True,
+                )
+                for it in items:
+                    key = f"{cat}|{it}"
+                    val = _chk_radio(key, it)
+                    checklist_items[key] = val
+                    if val == "NG":
+                        checklist_has_ng = True
+        else:
+            # 가설컨테이너 — 단일 리스트
+            for it in catalog:
+                val = _chk_radio(it, it)
+                checklist_items[it] = val
+                if val == "NG":
+                    checklist_has_ng = True
+
+        if checklist_has_ng:
+            st.warning(
+                "⚠ NG 항목이 있습니다. 아래 결과를 **불량**으로 선택하고 "
+                "사유 카탈로그·조치 사진을 첨부해 주세요."
+            )
+
+    insp_photo = photo_input(
+        "점검사진 (선택)",
+        key=f"tsk_insp_photo_{task_id}",
+        help_text="점검 현장 사진(결과 무관, 최대 2장). 모바일은 카메라 촬영 탭 이용.",
+        max_files=2,
+    )
+
     st.markdown(
         "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
         "점검 결과</b>",
         unsafe_allow_html=True,
     )
     result = st.radio(
-        "결과", ["양호", "불량", "오동작"], horizontal=True,
+        "결과", ["양호", "불량"], horizontal=True,
         label_visibility="collapsed", key=f"tsk_res_{task_id}",
     )
 
@@ -1064,61 +1473,53 @@ def task_inspect_inline(task_id: str) -> None:
     action_photo_now = None
     confirmer_value = inspector
 
-    # 오동작 입력 영역 (v1.5+)
-    mal_category = (eq.category if eq else "기타")
-    mal_detail = ""
-    mal_occurred = inspect_date
-    if result == "오동작":
-        st.caption(
-            "⚠ 시설 자체의 오작동을 별지9에 기록합니다. "
-            "조치는 [작업 조치 관리]에서 별도 시점에 입력하세요."
-        )
-        all_mal_cats = list(MAL_CATEGORIES_TEMP) + list(MAL_CATEGORIES_OTHER)
-        auto_mapped = (mal_category in all_mal_cats)
-
-        mc1, mc2 = st.columns([1, 1])
-        with mc1:
-            if auto_mapped:
-                # 장비 카테고리가 별지9 카테고리에 직접 매핑 — 텍스트만 표시
-                st.markdown(
-                    f"<div style='color:#475569; font-size:0.86rem;'>"
-                    f"<b style='color:#334155;'>시설구분 (별지9)</b><br>"
-                    f"<span style='font-size:0.95rem; color:#0F172A;'>"
-                    f"{mal_category}</span>"
-                    f"<span style='color:#94A3B8; font-size:0.78rem; "
-                    f"margin-left:0.3rem;'>(Task 장비 기준 자동)</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                # 별지9에 직접 매핑 없음 — 사용자 선택 필요
-                st.caption(
-                    f"장비({mal_category})가 별지9 카테고리에 직접 매핑되지 않습니다. "
-                    "분류를 선택해 주세요."
-                )
-                mal_category = st.selectbox(
-                    "시설구분 (별지9)",
-                    options=all_mal_cats,
-                    index=0,
-                    key=f"tsk_mal_cat_{task_id}",
-                )
-        with mc2:
-            mal_occurred = st.date_input(
-                "발생일자", value=inspect_date,
-                key=f"tsk_mal_date_{task_id}",
-            )
-        mal_detail = st.text_area(
-            "오동작 내용",
-            placeholder="예: 점등 불량, 충수 상태 불량, 오작동 등",
-            key=f"tsk_mal_detail_{task_id}",
-        )
+    # v1.6: 점검 종류 매칭되는 불량 사유 카탈로그 (화기작업/가설컨테이너)
+    # types_selected에서 카탈로그 보유 종류가 하나라도 있으면 그것의 사유 카탈로그를 사용
+    defect_codes_selected: list[str] = []
+    defect_other_text = ""
+    matching_kind_for_codes = next(
+        (k for k in types_selected if k in data.DEFECT_CODE_CATALOG),
+        None,
+    )
 
     if result == "불량":
         issue = st.text_area(
-            "지적사항",
+            "지적사항 (선택)",
             placeholder="예: 1-A계단 피난구 유도등 점등 불량",
             key=f"tsk_issue_{task_id}",
         )
+
+        # v1.6: 점검 종류가 카탈로그 보유 종류면 사유 multiselect 노출
+        if matching_kind_for_codes:
+            st.caption(
+                f"📋 **{matching_kind_for_codes}** — 불량 사유 카탈로그가 적용됩니다 (복수 선택 가능)"
+            )
+            defect_codes_selected = st.multiselect(
+                "불량 사유 *",
+                options=data.defect_codes_for(matching_kind_for_codes),
+                key=f"tsk_dcodes_{task_id}",
+                placeholder="해당 사유를 모두 선택해주세요",
+            )
+            if "기타" in defect_codes_selected:
+                defect_other_text = st.text_input(
+                    "기타 — 상세 내용 *",
+                    key=f"tsk_dother_{task_id}",
+                    placeholder="기타 선택 시 구체 내용 필수",
+                )
+
+        # 불량 조치 사진 — 의무화 (v1.6)
+        st.markdown(
+            "<div style='color:#DC2626; font-size:0.82rem; font-weight:600; margin-top:0.4rem;'>"
+            "📷 조치 사진 — 필수 첨부</div>",
+            unsafe_allow_html=True,
+        )
+        action_photo_now = photo_input(
+            "조치 사진 *",
+            key=f"tsk_act_photo_{task_id}",
+            help_text="불량 시 사진 첨부 필수(최대 2장). 모바일은 카메라 촬영 탭으로 즉시 촬영.",
+            max_files=2,
+        )
+
         action_immediate = st.checkbox(
             "현장에서 즉시 조치 완료 (선택)",
             value=False,
@@ -1136,11 +1537,6 @@ def task_inspect_inline(task_id: str) -> None:
                 placeholder="예: 적재물 이동 완료, 전구 교체 등",
                 key=f"tsk_act_note_{task_id}",
             )
-            action_photo_now = photo_input(
-                "조치 사진 (선택)",
-                key=f"tsk_act_photo_{task_id}",
-                help_text="모바일은 카메라 촬영 탭으로 즉시 촬영.",
-            )
         else:
             st.caption(
                 "→ 지적사항만 등록되며, 작업 조치 관리에서 별도 시점에 조치 입력합니다."
@@ -1152,58 +1548,82 @@ def task_inspect_inline(task_id: str) -> None:
         use_container_width=True,
         key=f"tsk_submit_{task_id}",
     ):
-        if result == "오동작":
-            if not mal_detail.strip():
-                st.error("오동작 내용을 입력해 주세요.")
-                return
-            # 오동작은 별지9에 등록, Deficiency 생성 X
-            from lib.data import next_malfunction_id, Malfunction, _db, _task_rows, _refresh_round_status
-            new_mid = next_malfunction_id()
-            data.add_malfunction(Malfunction(
-                malfunction_id=new_mid,
-                category=mal_category,  # type: ignore[arg-type]
-                occurred_on=mal_occurred,
-                detail=mal_detail.strip(),
-                action="",
-                confirmer=inspector,
-                task_id=t.task_id,
-                action_done=False,
-            ))
-            # Task → Completed + 회차 status 자동 재계산
-            _db().table("inspection_tasks").update(
-                {"status": "Completed"}
-            ).eq("task_id", t.task_id).execute()
-            _task_rows.clear()
-            if t.round_id:
-                _refresh_round_status(t.round_id)
-            st.session_state.pop("round_inline_start_for", None)
-            st.session_state["just_completed_task"] = t.task_id
-            st.session_state["just_submitted_malfunction"] = True
-            st.rerun()
-            return
-
         if not types_selected:
             st.error("점검 종류를 1개 이상 선택해 주세요.")
             return
-        if result == "불량" and not issue.strip():
-            st.error("불량이면 지적사항을 입력해 주세요.")
+
+        # v1.7: NG 항목이 있는데 결과가 "양호"면 저장 차단
+        if checklist_kind and checklist_has_ng and result == "양호":
+            st.error(
+                "세부 checklist에 NG 항목이 있습니다. 결과를 '불량'으로 선택하고 "
+                "사유 카탈로그·조치 사진을 첨부해 주세요."
+            )
             return
+
+        # v1.6: 불량 시 검증 강화
+        if result == "불량":
+            # 사유 카탈로그 적용 종류면 최소 1개 선택 필수
+            if matching_kind_for_codes and not defect_codes_selected:
+                st.error(f"{matching_kind_for_codes} — 불량 사유를 1개 이상 선택해 주세요.")
+                return
+            # 기타 선택 시 상세 텍스트 필수
+            if "기타" in defect_codes_selected and not defect_other_text.strip():
+                st.error("기타를 선택했으면 상세 내용을 입력해 주세요.")
+                return
+            # 조치 사진 필수 (v1.6)
+            if not action_photo_now:
+                st.error("불량 시 조치 사진은 필수입니다. 첨부 후 다시 제출해 주세요.")
+                return
+            # 사유 카탈로그가 없는 종류일 때만 지적사항 텍스트 필수
+            if not matching_kind_for_codes and not issue.strip():
+                st.error("불량이면 지적사항을 입력해 주세요.")
+                return
 
         # 통보서 번호 (불량일 때만 발급)
         new_no = None
         if result == "불량":
             new_no = next_notice_no(inspect_date)
 
-        # Deficiency row 생성 (v1.5: 조치 단계 포함)
-        photo_bytes = (
-            action_photo_now.getvalue()
-            if (action_photo_now and action_immediate)
-            else None
+        # 사진 업로드 — v1.6: 불량 시 항상, 양호 시 없음. v1.9(260907): 최대 2장.
+        _action_photos = (
+            (action_photo_now or []) if result == "불량" else []
         )
         new_def_id = data.next_deficiency_id()
-        photo_path = None
-        if photo_bytes:
-            photo_path = data._upload_action_photo(new_def_id, photo_bytes)
+        # v1.9(260907): 별도 suffix로 저장 — record_deficiency_action이 나중에
+        # 같은 bare deficiency_id로 조치 후 사진을 업로드(upsert)할 때 이 발견 시
+        # 사진 Storage object를 덮어쓰지 않도록 키 충돌을 원천 차단.
+        photo_path = (
+            data._upload_action_photo(f"{new_def_id}-disc", _action_photos[0].getvalue())
+            if len(_action_photos) >= 1 else None
+        )
+        photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-disc2", _action_photos[1].getvalue())
+            if len(_action_photos) >= 2 else None
+        )
+
+        _insp_photos = insp_photo or []
+        insp_photo_path = (
+            data._upload_action_photo(f"{new_def_id}-insp", _insp_photos[0].getvalue())
+            if len(_insp_photos) >= 1 else None
+        )
+        insp_photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-insp2", _insp_photos[1].getvalue())
+            if len(_insp_photos) >= 2 else None
+        )
+
+        # issue 텍스트 — 사유 카탈로그가 있으면 사유 요약, 없으면 자유 입력
+        if result == "불량" and matching_kind_for_codes:
+            codes_display = list(defect_codes_selected)
+            if "기타" in codes_display and defect_other_text.strip():
+                codes_display = [
+                    c if c != "기타" else f"기타: {defect_other_text.strip()}"
+                    for c in codes_display
+                ]
+            issue_final = " · ".join(codes_display)
+            if issue.strip():
+                issue_final = f"{issue_final} — {issue.strip()}"
+        else:
+            issue_final = issue.strip() or "양호"
 
         # 사용 영역: 정정값이 있으면 그것을 우선, 아니면 장비/Task 정보 사용
         floor = override_floor
@@ -1214,7 +1634,7 @@ def task_inspect_inline(task_id: str) -> None:
             inspector=inspector,
             floor=floor, zone=zone,
             inspection_types=types_selected,  # type: ignore[arg-type]
-            issue=issue.strip() or "양호",
+            issue=issue_final,
             resolution=(
                 "완료" if (result == "양호" or action_immediate) else "불가"
             ),  # type: ignore[arg-type]
@@ -1224,8 +1644,20 @@ def task_inspect_inline(task_id: str) -> None:
             action_done=action_immediate or result == "양호",
             action_at=inspect_date if (action_immediate or result == "양호") else None,
             action_note=action_note_now.strip() if action_immediate else "",
-            action_photo_path=photo_path,
+            # v1.9(260907): 발견 시 사진은 photo_path로 이동. 단, "현장에서 즉시 조치 완료"를
+            # 체크한 경우는 같은 사진이 조치 결과 사진이기도 하므로 action_photo_path에도 그대로
+            # 채워야 별지6(조치 결과 사진 컬럼)이 계속 사진을 보여준다. 즉시조치가 아니면 None으로
+            # 시작해, 나중에 [작업 조치 관리] record_deficiency_action이 조치 후 사진으로 채운다.
+            action_photo_path=(photo_path if action_immediate else None),
+            action_photo_path2=(photo_path2 if action_immediate else None),
             submitter=inspector,
+            defect_codes=defect_codes_selected,  # v1.6
+            defect_other=defect_other_text.strip(),  # v1.6
+            checklist_items=checklist_items,  # v1.7
+            photo_path=photo_path,                    # 발견 시(조치 전) 사진
+            photo_path2=photo_path2,                   # 발견 시(조치 전) 사진 2번째
+            inspection_photo_path=insp_photo_path,     # 결과 무관 점검사진
+            inspection_photo_path2=insp_photo_path2,   # 결과 무관 점검사진 2번째
         ))
 
         # 장비 health_status 갱신 (있으면)
@@ -1283,21 +1715,63 @@ def malfunction_dialog() -> None:
         key="mal_dlg_detail",
     )
 
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.84rem; margin:0.4rem 0 0.2rem;'>"
+        "<b>위치 (선택)</b> — 오동작 발생 위치를 도면에서 선택합니다. "
+        "도면 밖·불명 위치는 비워둡니다.</div>",
+        unsafe_allow_html=True,
+    )
+    picked_loc = _location_map_picker("mal_dlg_loc", highlight_category=category)
+    if picked_loc:
+        pc1, pc2 = st.columns([4, 1])
+        with pc1:
+            st.success(f"선택 위치: {picked_loc['label']}")
+        with pc2:
+            if st.button("위치 지우기", key="mal_dlg_loc_clear",
+                         use_container_width=True):
+                # picked 뿐 아니라 도면 차트의 잔여 선택 상태까지 비워야
+                # rerun 시 픽커가 같은 점을 다시 집지 않는다
+                for _k in [k for k in st.session_state
+                           if k.startswith("mal_dlg_loc_chart_")]:
+                    st.session_state.pop(_k, None)
+                st.session_state.pop("mal_dlg_loc_picked", None)
+                st.rerun()
+    else:
+        st.caption("위치 미지정 — 필요 시 위 도면에서 선택하세요.")
+
     if st.button("등록", type="primary", use_container_width=True, key="mal_dlg_submit"):
         if not detail.strip():
             st.error("오동작 내용을 입력해 주세요.")
             return
 
+        _loc = st.session_state.get("mal_dlg_loc_picked") or {}
+        # 오동작 접수 회차 + Task 자동 발행 — 직접 등록분에 점검/작업 ID 부여
+        _round_id = next_round_id()
+        add_round(InspectionRound(
+            round_id=_round_id, task_type=data.MAL_ROUND_TYPE,
+            assignee=reporter, due_date=occurred, status="Completed",
+            note=f"오동작 접수 · {category}",
+        ))
+        _task_id = next_task_id()
+        _eq_label = (f"{_loc['floor']}/{_loc['zone']} · {category}"
+                     if _loc else f"오동작 · {category}")
+        add_task(InspectionTask(
+            task_id=_task_id, equipment_label=_eq_label,
+            task_type=data.MAL_ROUND_TYPE, assignee=reporter,
+            due_date=occurred, status="Completed",
+            floor=_loc.get("floor", ""), zone=_loc.get("zone", ""),
+            round_id=_round_id,
+        ))
         new_id = data.next_malfunction_id()
         add_malfunction(Malfunction(
-            malfunction_id=new_id,
-            category=category,  # type: ignore[arg-type]
-            occurred_on=occurred,
-            detail=detail.strip(),
-            action="",  # 조치는 후속 시점에 작업 조치 관리에서 입력
-            confirmer=reporter,  # 최초 발견자
+            malfunction_id=new_id, category=category, occurred_on=occurred,
+            detail=detail.strip(), action="", confirmer=reporter,
             action_done=False,
+            floor=_loc.get("floor", ""), zone=_loc.get("zone", ""),
+            spot_id=_loc.get("spot_id"),
+            task_id=_task_id,
         ))
+        st.session_state.pop("mal_dlg_loc_picked", None)
         st.session_state["just_submitted_malfunction"] = True
         st.rerun()
 
@@ -1356,14 +1830,112 @@ def malfunction_action_dialog(malfunction_id: str) -> None:
         st.rerun()
 
 
+def _eq_new_spot_map(floor: str):
+    """신규 장비 등록 '신규 위치 만들기' — 도면 클릭 좌표 픽업.
+    빈 곳(격자) 클릭 시 (x_pct, y_pct) 반환, 아니면 None.
+    기존 spot은 노란 점(참고), 현재 선택 좌표는 파란 별로 표시."""
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+    from lib.floor_widget import (
+        control_toggle, plotly_config, lock_overlay_css, legend_html,
+    )
+
+    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+    img_path = ASSETS_DIR / f"{floor}.png"
+    if not img_path.exists():
+        st.caption(f"({floor} 도면 이미지가 없어 아래 좌표를 직접 입력하세요)")
+        return None
+    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    # 기존 spot (참고용, 노란 점)
+    fspots = data.load_spots(floor)
+    if fspots:
+        fig.add_trace(go.Scatter(
+            x=[s.x_pct / 100 * FIG_W for s in fspots],
+            y=[FIG_H - s.y_pct / 100 * FIG_H for s in fspots],
+            mode="markers",
+            marker=dict(size=12, color="#F59E0B", line=dict(color="#FFFFFF", width=1.5)),
+            customdata=[("spot",)] * len(fspots),
+            hovertemplate="기존 위치<extra></extra>", showlegend=False, name="기존",
+        ))
+
+    # 현재 선택 좌표 (파란 별)
+    cx = float(st.session_state.get("eq_dlg_new_x", 50.0))
+    cy = float(st.session_state.get("eq_dlg_new_y", 50.0))
+    fig.add_trace(go.Scatter(
+        x=[cx / 100 * FIG_W], y=[FIG_H - cy / 100 * FIG_H],
+        mode="markers",
+        marker=dict(size=20, color="#2563EB", symbol="star",
+                    line=dict(color="#FFFFFF", width=2)),
+        customdata=[("cur",)],
+        hovertemplate="현재 선택 위치<extra></extra>", showlegend=False, name="현재",
+    ))
+
+    # 클릭 격자
+    gx, gy = [], []
+    for i in range(50):
+        for j in range(50):
+            gx.append((i + 0.5) / 50 * FIG_W)
+            gy.append((j + 0.5) / 50 * FIG_H)
+    fig.add_trace(go.Scatter(
+        x=gx, y=gy, mode="markers",
+        marker=dict(size=10, color="rgba(59,130,246,0.22)", line=dict(width=0)),
+        customdata=[("grid",)] * len(gx),
+        hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
+        showlegend=False, name="grid",
+    ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#F8FAFC", height=420,
+        dragmode="pan", showlegend=False, clickmode="event+select",
+        uirevision=f"eq_new_{floor}",
+    )
+
+    st.markdown(legend_html([
+        ("#2563EB", "현재 선택 위치(★)"),
+        ("#F59E0B", "기존 위치"),
+        ("#93C5FD", "클릭 가능 영역(좌표 픽업)"),
+    ]), unsafe_allow_html=True)
+
+    # 좌표 픽업이 주목적이라 기본 잠금 해제 (바로 클릭 가능)
+    locked = control_toggle("eq_new_spot_map", default_locked=False)
+    if locked:
+        lock_overlay_css()
+    event = st.plotly_chart(
+        fig, use_container_width=True, config=plotly_config(),
+        on_select="rerun", selection_mode=["points"],
+        key=f"eq_new_map_{floor}",
+    )
+    if (not locked and event and getattr(event, "selection", None)
+            and getattr(event.selection, "points", None)):
+        pt = event.selection.points[-1]
+        cd = pt.get("customdata")
+        if cd and cd[0] == "grid":
+            x_pct = round(pt["x"] / FIG_W * 100, 2)
+            y_pct = round((FIG_H - pt["y"]) / FIG_H * 100, 2)
+            return (x_pct, y_pct)
+    return None
+
+
 @st.dialog("신규 장비 등록", width="large")
 def equipment_dialog() -> None:
     """시설 마스터에 신규 장비를 등록. 위치는 spot 객체에서 선택 (관리자가
     위치 마스터에서 정의). 등록 후 QR 모달은 자동 노출하지 않는다."""
     st.markdown(
         "<div style='color:#64748B; font-size:0.88rem; margin-bottom:0.5rem;'>"
-        "새 소방시설을 시설 마스터에 등록합니다. 위치는 관리자가 정의한 "
-        "spot 목록에서 선택하며, 등록 즉시 QR이 발급됩니다."
+        "새 소방시설을 시설 마스터에 등록합니다. 위치는 기존 spot에서 선택하거나 "
+        "**신규 위치를 즉석 생성**할 수 있으며, 등록 즉시 QR이 발급됩니다."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1376,54 +1948,116 @@ def equipment_dialog() -> None:
     with c1:
         category = st.selectbox("카테고리", options=EQ_CATEGORIES, key="eq_dlg_cat")
     with c2:
+        # 카테고리 기반 장비명 자동 생성 (수정 가능). 카테고리를 바꾸면
+        # 미수정(=이전 자동값 그대로) 상태일 때만 새 자동값으로 교체하고,
+        # 사용자가 직접 고친 이름은 보존한다.
+        _auto_name = f"{category} {auto_eid.split('-')[-1]}"  # 예: 소화기 0015
+        _name_key = "eq_dlg_name"
+        _name_auto_prev = "eq_dlg_name_auto_prev"
+        if st.session_state.get(_name_key, "") in ("", st.session_state.get(_name_auto_prev)):
+            st.session_state[_name_key] = _auto_name
+        st.session_state[_name_auto_prev] = _auto_name
         equipment_name = st.text_input(
             "장비명",
-            placeholder="예: ABC Extinguisher (5kg)",
-            key="eq_dlg_name",
+            key=_name_key,
+            help="카테고리 기준으로 자동 생성된 이름입니다. 필요 시 수정하세요.",
         )
 
-    # ── 위치 spot 선택 (층 → spot 2단계) ──
+    # ── 위치 지정: 기존 spot 선택 OR 신규 위치 즉석 생성 (v1.7 전체 이관) ──
     all_spots = data.load_spots()
     floors_with_spots = sorted({s.floor for s in all_spots},
                                key=lambda f: EQ_FLOORS.index(f) if f in EQ_FLOORS else 999)
 
-    c3, c4 = st.columns([1, 2])
-    with c3:
-        if floors_with_spots:
-            floor = st.selectbox(
-                "층", options=floors_with_spots, key="eq_dlg_floor",
-            )
-        else:
-            floor = None
-            st.markdown(
-                "<div style='padding-top:1.7rem; color:#DC2626; font-size:0.85rem;'>"
-                "정의된 위치가 없습니다.</div>",
-                unsafe_allow_html=True,
-            )
-    with c4:
-        floor_spots = [s for s in all_spots if s.floor == floor] if floor else []
-        if floor_spots:
-            spot_idx = st.selectbox(
-                "위치 (spot)",
-                options=range(len(floor_spots)),
-                format_func=lambda i: (
-                    f"{floor_spots[i].room_name} "
-                    f"({floor_spots[i].spot_id})"
-                ),
-                key="eq_dlg_spot_idx",
-            )
-            sel_spot = floor_spots[spot_idx]
-        else:
-            sel_spot = None
-            st.markdown(
-                "<div style='padding-top:1.7rem; color:#94A3B8; font-size:0.85rem;'>"
-                "이 층에 정의된 위치가 없습니다. 관리자에게 위치 마스터에서 spot을 "
-                "추가해달라고 요청하세요.</div>",
-                unsafe_allow_html=True,
+    loc_mode = st.radio(
+        "위치 지정",
+        ["기존 위치 선택", "신규 위치 만들기"],
+        horizontal=True,
+        key="eq_dlg_loc_mode",
+    )
+
+    sel_spot = None          # 기존 선택 결과
+    new_spot_meta = None     # 신규 생성 결과 (floor, room_name, x, y)
+
+    if loc_mode == "기존 위치 선택":
+        c3, c4 = st.columns([1, 2])
+        with c3:
+            if floors_with_spots:
+                floor = st.selectbox(
+                    "층", options=floors_with_spots, key="eq_dlg_floor",
+                )
+            else:
+                floor = None
+                st.markdown(
+                    "<div style='padding-top:1.7rem; color:#DC2626; font-size:0.85rem;'>"
+                    "정의된 위치가 없습니다. '신규 위치 만들기'를 사용하세요.</div>",
+                    unsafe_allow_html=True,
+                )
+        with c4:
+            floor_spots = [s for s in all_spots if s.floor == floor] if floor else []
+            if floor_spots:
+                spot_idx = st.selectbox(
+                    "위치 (spot)",
+                    options=range(len(floor_spots)),
+                    format_func=lambda i: (
+                        f"{floor_spots[i].room_name} "
+                        f"({floor_spots[i].spot_id})"
+                    ),
+                    key="eq_dlg_spot_idx",
+                )
+                sel_spot = floor_spots[spot_idx]
+            else:
+                st.markdown(
+                    "<div style='padding-top:1.7rem; color:#94A3B8; font-size:0.85rem;'>"
+                    "이 층에 정의된 위치가 없습니다. '신규 위치 만들기'로 등록하세요.</div>",
+                    unsafe_allow_html=True,
+                )
+        if sel_spot is not None:
+            with st.expander("🗺️ 도면에서 위치 확인", expanded=False):
+                _spot_preview_map(sel_spot)
+    else:
+        # 신규 위치 즉석 생성 — 도면 클릭으로 좌표 픽업 + 등록과 동시에 spot 정식 생성
+        nc1, nc2 = st.columns([1, 2])
+        with nc1:
+            new_floor = st.selectbox("층", options=SPOT_FLOORS, key="eq_dlg_new_floor")
+        with nc2:
+            new_room = st.text_input(
+                "위치 설명(방이름)",
+                key="eq_dlg_new_room",
+                placeholder="예: B2 기계실 입구",
             )
 
+        # 좌표 세션 기본값 (widget 생성 전 초기화 — 도면 클릭 결과가 여기 반영됨)
+        if "eq_dlg_new_x" not in st.session_state:
+            st.session_state["eq_dlg_new_x"] = 50.0
+        if "eq_dlg_new_y" not in st.session_state:
+            st.session_state["eq_dlg_new_y"] = 50.0
+
+        # 도면 클릭 좌표 픽업 — number_input 생성 전에 처리해야 세션값 반영됨
+        picked = _eq_new_spot_map(new_floor)
+        if picked is not None:
+            st.session_state["eq_dlg_new_x"] = picked[0]
+            st.session_state["eq_dlg_new_y"] = picked[1]
+
+        xc, yc = st.columns(2)
+        with xc:
+            new_x = st.number_input(
+                "x_pct (도면 폭 %)", min_value=0.0, max_value=100.0,
+                step=0.5, format="%.1f", key="eq_dlg_new_x",
+            )
+        with yc:
+            new_y = st.number_input(
+                "y_pct (도면 높이 %)", min_value=0.0, max_value=100.0,
+                step=0.5, format="%.1f", key="eq_dlg_new_y",
+            )
+        st.caption(
+            "💡 도면 잠금을 풀고 빈 곳을 클릭하면 좌표가 자동 픽업됩니다 "
+            "(파란 별 = 현재 선택). 미세조정은 위 숫자입력."
+        )
+        if new_room.strip():
+            new_spot_meta = (new_floor, new_room.strip(), new_x, new_y)
+
     serial = st.text_input(
-        "시리얼 번호 (자동 + 수정 가능)",
+        "시리얼 번호",
         value=auto_serial,
         key="eq_dlg_serial",
     )
@@ -1435,11 +2069,20 @@ def equipment_dialog() -> None:
         st.session_state["eq_dlg_types"] = cat_default_types
         st.session_state["eq_dlg_last_cat"] = category
 
+    # 활성 유형 ∪ 사전 설정된 값(카테고리 기본값·현재 선택) — 옵션 누락 방지
+    _active_types = data.load_inspection_types(active_only=True)
+    _seen: set[str] = set()
+    _extra_types = [
+        t for t in (list(cat_default_types)
+                    + list(st.session_state.get("eq_dlg_types", []) or []))
+        if t and t not in _active_types and not (t in _seen or _seen.add(t))
+    ]
     insp_types = st.multiselect(
-        "적용 점검 유형 (카테고리 기본값 자동 채움, 수정 가능)",
-        options=TASK_INSPECTION_TYPES,
+        "적용 점검 유형",
+        options=_active_types + _extra_types,
         key="eq_dlg_types",
         placeholder="이 장비에 적용 가능한 점검 유형을 선택",
+        help="카테고리 기본값이 자동으로 채워집니다. 필요 시 수정하세요.",
     )
 
     # 자동 생성 영역 (정보 표시용)
@@ -1450,8 +2093,16 @@ def equipment_dialog() -> None:
             f"<b>spot</b> · {sel_spot.room_name} ({sel_spot.spot_id})<br>"
             f"<b>도면 좌표</b> · ({sel_spot.x_pct:.1f}%, {sel_spot.y_pct:.1f}%)"
         )
+    elif new_spot_meta:
+        nf, nr, nx, ny = new_spot_meta
+        loc_html = (
+            f"<b>신규 위치</b> · {nf} / {nr} (등록 시 spot 생성)<br>"
+            f"<b>도면 좌표</b> · ({nx:.1f}%, {ny:.1f}%)"
+        )
     else:
-        loc_html = "<b>위치</b> · 위치 spot 미선택 (등록 불가)"
+        loc_html = "<b>위치</b> · 위치 미지정 (기존 선택 또는 신규 만들기 필요)"
+
+    has_location = (sel_spot is not None) or (new_spot_meta is not None)
 
     st.markdown(
         "<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; "
@@ -1465,7 +2116,7 @@ def equipment_dialog() -> None:
 
     if st.button(
         "등록 + QR 발급", type="primary", use_container_width=True,
-        key="eq_dlg_submit", disabled=(sel_spot is None),
+        key="eq_dlg_submit", disabled=(not has_location),
     ):
         if not equipment_name.strip():
             st.error("장비명을 입력해 주세요.")
@@ -1481,6 +2132,17 @@ def equipment_dialog() -> None:
                 "다른 번호를 입력하거나 자동 발급된 번호를 그대로 사용하세요."
             )
             return
+
+        # 신규 위치 만들기 모드면 spot을 먼저 정식 생성 (is_temporary=False)
+        if sel_spot is None and new_spot_meta is not None:
+            nf, nr, nx, ny = new_spot_meta
+            new_spot = data.Spot(
+                spot_id=data.next_spot_id(nf),
+                floor=nf, room_name=nr, notes="",
+                x_pct=nx, y_pct=ny, is_temporary=False,
+            )
+            data.add_spot(new_spot)
+            sel_spot = new_spot
 
         # spot 정보로 zone/location_id/pixel 좌표 자동 채움
         location_id = location_id_from_spot(sel_spot.spot_id)  # 예: 1F-03
@@ -1521,7 +2183,7 @@ def task_dialog() -> None:
         unsafe_allow_html=True,
     )
 
-    type_options = TASK_INSPECTION_TYPES + ["기타"]
+    type_options = data.load_inspection_types(active_only=True) + ["기타"]
     c1, c2 = st.columns([1, 1])
     with c1:
         type_choice = st.selectbox(
@@ -1546,63 +2208,67 @@ def task_dialog() -> None:
 
     resolved_type = (custom_type.strip() if type_choice == "기타" else type_choice)
 
-    # v1.5: 자유 점검 옵션 — 대상을 미리 선택하지 않고 점검 시작 시 정하는 방식
+    # v1.6: 일일 점검(화기작업구간 점검 의도)은 작업 구간을 매번 새로 잡아야 하므로
+    # 자유 점검 모드를 기본 ON으로 자동 활성화. 사용자가 풀어 다시 선택할 수도 있음.
+    is_daily = (type_choice == "일일 점검")
+    if is_daily and not st.session_state.get("_task_dlg_daily_seeded"):
+        st.session_state["task_dlg_free_mode"] = True
+        st.session_state["_task_dlg_daily_seeded"] = True
+    elif not is_daily:
+        st.session_state.pop("_task_dlg_daily_seeded", None)
+
+    # 점검 유형 → 적용 가능 장비 후보 (자유 점검이어도 목록은 항상 표시, 비활성화만)
+    all_eq = data.load_equipment()
+    if type_choice == "기타":
+        candidates = all_eq  # 기타는 전체에서 자유 선택
+    else:
+        candidates = [
+            e for e in all_eq if resolved_type in (e.inspection_types or [])
+        ]
+    eq_indices = list(range(len(candidates)))
+
+    # 자유 점검 체크박스가 목록 아래에 있으므로 session_state에서 미리 읽어 비활성화 판단
+    free_mode = st.session_state.get("task_dlg_free_mode", False)
+
+    # v1.7: 점검 유형이 바뀌면 대상 장비를 '전체 선택'으로 기본 세팅 (불필요한 것만 빼는 방식)
+    last_type = st.session_state.get("task_dlg_last_type")
+    if last_type != type_choice:
+        st.session_state["task_dlg_eq_idxs"] = list(eq_indices)
+        st.session_state["task_dlg_last_type"] = type_choice
+
+    # '모두 선택' 버튼은 기본이 전체 선택이라 제거. '전체 해제'만 유지 (rerun 방지로 state만)
+    _clr_col, _ = st.columns([1, 2.2])
+    with _clr_col:
+        if st.button("전체 해제", key="task_dlg_clear_all",
+                     use_container_width=True, disabled=free_mode):
+            st.session_state["task_dlg_eq_idxs"] = []
+
+    sel_idxs = st.multiselect(
+        f"대상 장비 (이 유형 해당 {len(candidates)}건 후보)",
+        options=eq_indices,
+        format_func=lambda i: (
+            f"{candidates[i].location_id} · {candidates[i].equipment_name}"
+        ),
+        key="task_dlg_eq_idxs",
+        placeholder="장비를 선택하세요 (여러 건 선택 가능)",
+        disabled=free_mode,
+    )
+
+    # v1.5 자유 점검 옵션 — v1.7: 대상 장비 목록 바로 아래에 배치, 체크 시 목록 비활성화
     free_mode = st.checkbox(
-        "대상 미선택 (자유 점검) — 회차만 만들고 점검 시작 시 장비를 선택",
+        "자유 점검 (점검 대상 미선택)",
         key="task_dlg_free_mode",
         help=(
             "체크 시 회차 1건만 만들고 Task는 0개입니다. "
-            "점검자가 안전점검 → [신규 Task 추가] 로 그때그때 등록 가능."
+            "점검자가 안전점검 → [신규 Task 추가] 로 그때그때 등록 가능. "
+            "일일 점검(화기작업구간) 선택 시 자동 활성화."
         ),
     )
 
     if free_mode:
-        candidates = []
         selected_eqs = []
-        st.markdown(
-            "<div style='color:#94A3B8; font-size:0.82rem;'>"
-            "회차만 등록되고 대상 장비는 빈 상태로 시작합니다.</div>",
-            unsafe_allow_html=True,
-        )
+        st.caption("자유 점검 — 회차만 등록되고 대상 장비는 점검 시작 시 선택합니다.")
     else:
-        # 점검 유형 → 적용 가능 장비 후보 필터
-        all_eq = data.load_equipment()
-        if type_choice == "기타":
-            candidates = all_eq  # 기타는 전체에서 자유 선택
-        else:
-            candidates = [
-                e for e in all_eq if resolved_type in (e.inspection_types or [])
-            ]
-
-        eq_indices = list(range(len(candidates)))
-
-        # 점검 유형이 바뀌면 multiselect 선택 초기화
-        last_type = st.session_state.get("task_dlg_last_type")
-        if last_type != type_choice:
-            st.session_state["task_dlg_eq_idxs"] = []
-            st.session_state["task_dlg_last_type"] = type_choice
-
-        # dialog 안에서는 st.rerun()이 모달을 닫아버리므로 session_state만 세팅
-        sel_col, clr_col = st.columns(2)
-        with sel_col:
-            if st.button("모두 선택", key="task_dlg_select_all",
-                         use_container_width=True,
-                         disabled=not eq_indices):
-                st.session_state["task_dlg_eq_idxs"] = list(eq_indices)
-        with clr_col:
-            if st.button("일괄 해제", key="task_dlg_clear_all",
-                         use_container_width=True):
-                st.session_state["task_dlg_eq_idxs"] = []
-
-        sel_idxs = st.multiselect(
-            f"대상 장비 (이 유형 해당 {len(candidates)}건 후보)",
-            options=eq_indices,
-            format_func=lambda i: (
-                f"{candidates[i].location_id} · {candidates[i].equipment_name}"
-            ),
-            key="task_dlg_eq_idxs",
-            placeholder="장비를 선택하세요 (여러 건 선택 가능)",
-        )
         selected_eqs = [candidates[i] for i in sel_idxs]
 
     # 공유 입력 (담당자·마감일·메모)

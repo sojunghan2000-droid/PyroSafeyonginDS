@@ -5,80 +5,177 @@ import pandas as pd
 import streamlit as st
 
 from lib import auth, data
-from lib.data import TASK_INSPECTION_TYPES
-from lib.inspection_dialog import EQ_FLOORS, equipment_dialog
+from lib.inspection_dialog import EQ_FLOORS, SPOT_FLOORS, equipment_dialog
 from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
 
-# 테이블 컬럼 비율 (총합 = 1) — 작업 상태 컬럼 신설
-COL_RATIOS = [1.0, 1.8, 0.9, 1.0, 0.9, 1.2, 0.9]
+# 테이블 컬럼 비율 — v1.8: 8컬럼(점검 유형 추가). 위치 등록/QR/최근 점검은 헤더에 ▾ 팝오버가 붙어 폭 여유 확보
+# [장비 ID, 시설 종류, 점검 유형, 위치 등록, QR 상태, 최근 점검, 점검 이력, 작업]
+COL_RATIOS = [0.9, 1.4, 1.3, 0.95, 0.95, 1.2, 0.85, 0.95]
+
+# 장비 건강상태 마커 색 (양호/불량/점검도래)
+_EQ_HEALTH_COLOR = {"PASS": "#16A34A", "FAIL": "#DC2626", "DUE": "#3B82F6"}
 
 
-def _table_header_html() -> str:
-    return (
-        "<div style='display:grid; "
-        f"grid-template-columns: {' '.join(f'{r}fr' for r in COL_RATIOS)}; "
-        "gap: 0.4rem; padding: 0.6rem 0.4rem; "
-        "color:#64748B; font-size:0.78rem; font-weight:600; "
-        "border-bottom:1px solid #E2E8F0;'>"
-        "<div>위치 ID</div>"
-        "<div>시설 종류</div>"
-        "<div>QR 상태</div>"
-        "<div>최근 점검일</div>"
-        "<div>Inspection Status</div>"
-        "<div>작업 상태</div>"
-        "<div>작업</div>"
-        "</div>"
+def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
+    """시설 관리 층 도면 미리보기 (읽기 전용) — 장비를 건강상태 색 마커로 표시.
+    height로 단일(460)/미니맵(180) 크기 구분."""
+    import base64
+    from pathlib import Path
+    import plotly.graph_objects as go
+
+    ASSETS = Path(__file__).resolve().parent.parent / "assets" / "floors"
+    FIG_W, FIG_H = 2978, 2105
+    p = ASSETS / f"{floor}.png"
+    if not p.exists():
+        return None
+    uri = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+
+    fig = go.Figure()
+    fig.add_layout_image(dict(
+        source=uri, xref="x", yref="y",
+        x=0, y=FIG_H, sizex=FIG_W, sizey=FIG_H,
+        sizing="stretch", layer="below", opacity=1.0,
+    ))
+
+    xs, ys, cs, txt, cd = [], [], [], [], []
+    for e in eq_list:
+        if not (e.pixel_x or e.pixel_y):
+            continue
+        xs.append(e.pixel_x / 100 * FIG_W)
+        ys.append(FIG_H - e.pixel_y / 100 * FIG_H)
+        cs.append(_EQ_HEALTH_COLOR.get(e.health_status, "#94A3B8"))
+        txt.append(e.location_id)
+        cd.append((e.equipment_id, e.equipment_name, e.health_status, e.location_id))
+    if xs:
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers+text",
+            text=txt, textposition="top center",
+            textfont=dict(size=10, color="#0F172A"),
+            marker=dict(size=15, color=cs, line=dict(color="#FFFFFF", width=2)),
+            customdata=cd,
+            hovertemplate=(
+                "<b>%{customdata[1]}</b><br>%{customdata[3]} · %{customdata[0]}"
+                "<br>상태: %{customdata[2]}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
+
+    fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
+    fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#F8FAFC", height=height,
+        showlegend=False, uirevision=f"eq_floor_{floor}",
+    )
+    return fig
+
+
+# 5개 컬럼 헤더 ? 팝오버 내용 (뜻 + 조치·등록 방법) — 짧게 유지
+_HINT_LOC_MD = ("**위치 등록** — 도면(spot)에 좌표가 등록됐는지 여부.\n\n"
+                "미등록 → **[속성]** 또는 위치 마스터에서 도면 위치 지정.")
+_HINT_QR_MD = ("**QR 상태** — PENDING(스티커 부착·첫 스캔 전) / "
+               "ASSIGNED(현장 스캔 완료).\n\n"
+               "PENDING → QR 스티커 부착 후 현장에서 스캔하면 자동 전환.")
+_HINT_INSP_MD = ("**최근 점검** — 마지막 점검일 + 결과(PASS 양호 / FAIL 불량 / "
+                 "DUE 점검 도래).\n\n"
+                 "FAIL·DUE → 안전점검 관리에서 점검·조치 진행.")
+_HINT_TYPE_MD = ("**점검 유형** — 그 장비에 적용 가능한 점검 종류(월간·분기 등). "
+                 "신규 일정 등록 시 이 목록으로 대상 장비를 자동 필터.\n\n"
+                 "등록·변경 → **[변경]** 열기 → "
+                 "**'이 장비에 적용 가능한 점검 유형'** 에서 선택 후 저장.")
+_HINT_ACTION_MD = ("**속성** — 장비 상세를 보고 편집합니다.\n\n"
+                   "QR 미리보기·스티커 URL, **적용 점검 유형(주기) 지정**, 위치(도면 spot) 확인.\n\n"
+                   "행의 **[변경]** 버튼으로 엽니다.")
+
+_HDR_LABEL_CSS = "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center;"
+
+
+def _hdr_with_hint(col, label: str, tip_md: str) -> None:
+    """헤더 컬럼: 라벨(가운데) + 옆에 작은 ? 설명 팝오버.
+    [spacer, 라벨, ?] 균형 배치로 라벨이 컬럼 정중앙에 오게 한다."""
+    with col:
+        sp, lc, pc = st.columns([0.32, 1, 0.32], vertical_alignment="center",
+                                gap="small")
+        lc.markdown(
+            f"<div style='{_HDR_LABEL_CSS}'>{label}</div>",
+            unsafe_allow_html=True,
+        )
+        with pc:
+            # 라벨 "?" + st.popover 자동 chevron(▾)은 CSS로 숨김 → 물음표만 보임
+            with st.popover("?", use_container_width=False):
+                st.markdown(tip_md)
+
+
+def _render_table_header() -> None:
+    """테이블 헤더 — 점검 유형/위치 등록/QR 상태/최근 점검/속성 5개 컬럼에 ? 설명 팝오버."""
+    st.markdown(
+        "<style>"
+        # st.popover 자동 chevron(▾) 아이콘 숨김 — 라벨 "?"만 노출
+        # (Streamlit 내부 emotion 스타일과의 우선순위 충돌 방지를 위해 클래스/속성 셀렉터를
+        #  중복 기술해 specificity를 높이고, display 외 속성도 함께 덮어써 이중 방어)
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] svg,"
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] [data-testid='stIconMaterial'][data-testid='stIconMaterial'],"
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] div[aria-hidden='true'][aria-hidden='true']"
+        "{display:none!important;visibility:hidden!important;width:0!important;"
+        "height:0!important;overflow:hidden!important;opacity:0!important;}"
+        # "?"를 작은 원형 도움말 배지로
+        ".st-key-eqhdr [data-testid='stPopoverButton']{"
+        "background:#F1F5F9!important;border:1px solid #E2E8F0!important;box-shadow:none!important;"
+        "border-radius:50%!important;width:1.2rem!important;height:1.2rem!important;"
+        "min-height:0!important;padding:0!important;line-height:1!important;"
+        "display:inline-flex!important;align-items:center!important;justify-content:center!important;"
+        "font-size:0.72rem!important;font-weight:700!important;color:#64748B!important;}"
+        ".st-key-eqhdr [data-testid='stPopoverButton'] p{"
+        "margin:0!important;font-size:0.72rem!important;font-weight:700!important;line-height:1!important;}"
+        ".st-key-eqhdr [data-testid='stPopoverButton']:hover{"
+        "background:#E2E8F0!important;color:#334155!important;border-color:#CBD5E1!important;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    with st.container(key="eqhdr"):
+        cols = st.columns(COL_RATIOS, vertical_alignment="center")
+        cols[0].markdown(f"<div style='{_HDR_LABEL_CSS}'>장비 ID</div>",
+                         unsafe_allow_html=True)
+        cols[1].markdown(f"<div style='{_HDR_LABEL_CSS}'>시설 종류</div>",
+                         unsafe_allow_html=True)
+        _hdr_with_hint(cols[2], "점검 유형", _HINT_TYPE_MD)
+        _hdr_with_hint(cols[3], "위치 등록", _HINT_LOC_MD)
+        _hdr_with_hint(cols[4], "QR 상태", _HINT_QR_MD)
+        _hdr_with_hint(cols[5], "최근 점검", _HINT_INSP_MD)
+        cols[6].markdown(f"<div style='{_HDR_LABEL_CSS}'>점검 이력</div>",
+                         unsafe_allow_html=True)
+        _hdr_with_hint(cols[7], "속성", _HINT_ACTION_MD)
+    st.markdown(
+        "<hr style='margin:0.15rem 0 0.1rem; border:none; "
+        "border-top:1px solid #E2E8F0;'>",
+        unsafe_allow_html=True,
     )
 
 
-# 작업 상태 칩 — 색상 + 라벨 우선순위 매핑
-def _work_chip(eq, tasks, notices) -> tuple[str, str]:
-    """장비별 가장 시급한 단건 칩 (color, label).
-    우선순위: 통보서 대기 > 지연 > 진행 > 예정 > 최근 완료 > 작업 없음."""
-    # 통보서 대기 (floor/zone 매칭 — 장비-통보서 직접 FK가 없으므로 위치 기준)
-    pending_notices = sum(
-        1 for n in notices
-        if not n.action_done and n.floor == eq.floor and n.zone == eq.zone
-    )
-    if pending_notices:
-        return "#DC2626", f"통보서 대기 {pending_notices}"
-
-    # 장비 매칭 task — equipment_label에 location_id 또는 equipment_name 포함
-    matching = [
-        t for t in tasks
+# 장비별 완료 점검 결과 이력 (task_id로 정밀 매칭)
+def _equipment_history(eq, tasks, defs) -> list[tuple]:
+    """장비의 완료 점검 결과 이력을 최신순으로 반환.
+    이 장비에 매칭되는 task의 task_id로 Deficiency를 정밀 매칭 (구역 단위 아님).
+    각 원소: (inspection_date, types_str, is_good, detail, deficiency)."""
+    task_ids = {
+        t.task_id for t in tasks
         if eq.location_id in t.equipment_label or eq.equipment_name in t.equipment_label
-    ]
-    overdue = [t for t in matching if t.status == "Overdue"]
-    if overdue:
-        return "#DC2626", f"지연 {len(overdue)}"
-    in_prog = [t for t in matching if t.status == "In Progress"]
-    if in_prog:
-        return "#F97316", f"진행 {len(in_prog)}"
-    scheduled = [t for t in matching if t.status == "Scheduled"]
-    if scheduled:
-        return "#3B82F6", f"예정 {len(scheduled)}"
-    completed = [t for t in matching if t.status == "Completed"]
-    if completed:
-        last = max(t.due_date for t in completed)
-        days = (data.TODAY - last).days
-        return "#10B981", f"완료 ({days}d 전)" if days >= 0 else "완료"
-    return "#94A3B8", "작업 없음"
+    }
+    rows = []
+    for d in defs:
+        if d.task_id and d.task_id in task_ids:
+            is_good = (d.issue or "").strip() in ("", "양호")
+            detail = "양호" if is_good else (d.issue or "지적사항")
+            types_str = " / ".join(d.inspection_types) if d.inspection_types else "-"
+            rows.append((d.inspection_date, types_str, is_good, detail, d))
+    rows.sort(key=lambda r: r[0] or data.TODAY, reverse=True)
+    return rows
 
 
-def _work_chip_html(color: str, label: str) -> str:
-    return (
-        f"<div style='display:inline-block; padding:0.18rem 0.55rem; "
-        f"border:1px solid {color}; color:{color}; background:{color}10; "
-        f"border-radius:999px; font-size:0.78rem; font-weight:600;'>"
-        f"{label}</div>"
-    )
-
-
-@st.dialog("점검 현황", width="large")
+@st.dialog("장비 점검 이력", width="large")
 def _status_dialog(equipment_id: str) -> None:
-    """장비별 점검 일정·지적사항·통보서 이력 (읽기 전용)."""
+    """장비별 점검 결과 이력·점검 일정·구역 통보서 (읽기 전용)."""
     eq = next((x for x in data.load_equipment() if x.equipment_id == equipment_id), None)
     if not eq:
         st.error("장비를 찾을 수 없습니다.")
@@ -93,7 +190,7 @@ def _status_dialog(equipment_id: str) -> None:
         if eq.location_id in t.equipment_label or eq.equipment_name in t.equipment_label
     ]
     matching_notices = [n for n in notices if n.floor == eq.floor and n.zone == eq.zone]
-    matching_defs = [d for d in defs if d.floor == eq.floor and d.zone == eq.zone]
+    history = _equipment_history(eq, tasks, defs)
 
     # 헤더
     st.markdown(
@@ -108,10 +205,47 @@ def _status_dialog(equipment_id: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── 점검 일정 ──
+    # ── 점검 결과 이력 (완료 점검, 최신순 — task_id 정밀 매칭) ──
     st.markdown(
         f"<div style='font-weight:700; color:#0F172A; font-size:1rem; "
-        f"margin:0.7rem 0 0.3rem;'>점검 일정 ({len(matching_tasks)}건)</div>",
+        f"margin:0.7rem 0 0.3rem;'>📋 점검 결과 이력 ({len(history)}건)</div>",
+        unsafe_allow_html=True,
+    )
+    if history:
+        hb = ""
+        for (dt, types_str, is_good, detail, d) in history:
+            rb = (
+                "<span style='color:#16A34A; font-weight:600;'>양호</span>"
+                if is_good else
+                "<span style='color:#DC2626; font-weight:600;'>지적</span>"
+            )
+            content = "-" if is_good else detail
+            hb += (
+                "<tr style='border-bottom:1px solid #F1F5F9;'>"
+                f"<td style='padding:0.5rem 0.3rem; color:#334155;'>{fmt_date(dt)}</td>"
+                f"<td style='padding:0.5rem 0.3rem; color:#0F172A;'>{types_str}</td>"
+                f"<td style='padding:0.5rem 0.3rem;'>{rb}</td>"
+                f"<td style='padding:0.5rem 0.3rem; color:#0F172A;'>{content}</td>"
+                "</tr>"
+            )
+        hh = (
+            "<table style='width:100%; border-collapse:collapse;'>"
+            "<thead><tr style='color:#64748B; font-size:0.78rem; text-align:left; "
+            "border-bottom:1px solid #E2E8F0;'>"
+            "<th style='padding:0.4rem 0.3rem;'>일자</th>"
+            "<th style='padding:0.4rem 0.3rem;'>점검 유형</th>"
+            "<th style='padding:0.4rem 0.3rem;'>결과</th>"
+            "<th style='padding:0.4rem 0.3rem;'>지적 내용</th>"
+            "</tr></thead><tbody>"
+        )
+        st.markdown(hh + hb + "</tbody></table>", unsafe_allow_html=True)
+    else:
+        st.info("완료된 점검 이력이 없습니다. (점검 시작 → 결과 입력 시 누적됩니다)")
+
+    # ── 점검 일정 (예정·진행 포함 전체) ──
+    st.markdown(
+        f"<div style='font-weight:700; color:#0F172A; font-size:1rem; "
+        f"margin:1rem 0 0.3rem;'>🗓️ 점검 일정 ({len(matching_tasks)}건)</div>",
         unsafe_allow_html=True,
     )
     if matching_tasks:
@@ -141,25 +275,22 @@ def _status_dialog(equipment_id: str) -> None:
     else:
         st.info("이 장비에 매핑된 점검 일정이 없습니다.")
 
-    # ── 지적사항 / 통보서 ──
+    # ── 구역 통보서 (층/구역 단위 — 장비 직접 FK 없어 위치 기준) ──
     st.markdown(
         f"<div style='font-weight:700; color:#0F172A; font-size:1rem; "
-        f"margin:1rem 0 0.3rem;'>지적사항 / 통보서 ({len(matching_defs) + len(matching_notices)}건)</div>",
+        f"margin:1rem 0 0.3rem;'>📨 구역 통보서 ({len(matching_notices)}건)</div>",
         unsafe_allow_html=True,
     )
-    if matching_defs or matching_notices:
+    if matching_notices:
         rows = []
-        for d in matching_defs:
-            rows.append(("지적", d.inspection_date, d.issue, d.resolution, d.notice_no or "-"))
         for n in matching_notices:
             status_text = "조치 완료" if n.action_done else "조치 대기"
-            rows.append(("통보서", n.inspection_date, n.issue, status_text, n.notice_no))
-        rows.sort(key=lambda r: r[1] or data.TODAY, reverse=True)
+            rows.append((n.inspection_date, n.issue, status_text, n.notice_no))
+        rows.sort(key=lambda r: r[0] or data.TODAY, reverse=True)
         header = (
             "<table style='width:100%; border-collapse:collapse;'>"
             "<thead><tr style='color:#64748B; font-size:0.78rem; text-align:left; "
             "border-bottom:1px solid #E2E8F0;'>"
-            "<th style='padding:0.4rem 0.3rem;'>구분</th>"
             "<th style='padding:0.4rem 0.3rem;'>일자</th>"
             "<th style='padding:0.4rem 0.3rem;'>내용</th>"
             "<th style='padding:0.4rem 0.3rem;'>상태</th>"
@@ -168,17 +299,16 @@ def _status_dialog(equipment_id: str) -> None:
         )
         body = "".join(
             "<tr style='border-bottom:1px solid #F1F5F9;'>"
-            f"<td style='padding:0.5rem 0.3rem; color:#334155;'>{kind}</td>"
             f"<td style='padding:0.5rem 0.3rem; color:#334155;'>{fmt_date(dt)}</td>"
             f"<td style='padding:0.5rem 0.3rem; color:#0F172A;'>{issue}</td>"
             f"<td style='padding:0.5rem 0.3rem;'>{badge(status)}</td>"
             f"<td style='padding:0.5rem 0.3rem; color:#475569; font-size:0.8rem;'>{notice_no}</td>"
             "</tr>"
-            for (kind, dt, issue, status, notice_no) in rows
+            for (dt, issue, status, notice_no) in rows
         )
         st.markdown(header + body + "</tbody></table>", unsafe_allow_html=True)
     else:
-        st.info("이 장비/구역에서 발급된 지적사항·통보서가 없습니다.")
+        st.info("이 구역에서 발급된 통보서가 없습니다.")
 
     st.markdown("<div style='height:0.8rem;'></div>", unsafe_allow_html=True)
     st.markdown(
@@ -196,7 +326,7 @@ def _status_dialog(equipment_id: str) -> None:
         st.rerun()
 
 
-@st.dialog("QR 코드 미리보기", width="large")
+@st.dialog("속성", width="large")
 def _qr_dialog(equipment_id: str) -> None:
     """선택된 장비의 QR 모달."""
     eq = next((x for x in data.load_equipment() if x.equipment_id == equipment_id), None)
@@ -239,9 +369,14 @@ def _qr_dialog(equipment_id: str) -> None:
     # session_state에 키가 없을 때만 현재 값으로 초기화 (편집 중 유지)
     if types_key not in st.session_state:
         st.session_state[types_key] = list(eq.inspection_types or [])
+    # 활성 유형 ∪ 이 장비의 기존 유형(비활성이어도 기존 선택은 옵션에 포함)
+    _active_types = data.load_inspection_types(active_only=True)
+    _type_opts = _active_types + [
+        t for t in (eq.inspection_types or []) if t not in _active_types
+    ]
     edited_types = st.multiselect(
         "적용 점검 유형",
-        options=TASK_INSPECTION_TYPES,
+        options=_type_opts,
         key=types_key,
         label_visibility="collapsed",
         placeholder="적용 가능한 점검 유형 선택",
@@ -361,6 +496,20 @@ def render() -> None:
                 use_container_width=True,
             )
 
+    # 주요 기능 안내
+    st.markdown(
+        "<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; "
+        "padding:0.55rem 0.9rem; margin:0.1rem 0 0.7rem; color:#475569; "
+        "font-size:0.85rem; line-height:1.7;'>"
+        "<b style='color:#334155;'>주요 기능</b><br>"
+        "• <b>시설/장비 신규 등록</b> — 우측 <b>[신규 장비 등록]</b> 버튼에서 "
+        "종류·위치(도면)·점검 유형을 지정해 추가<br>"
+        "• <b>시설/장비별 점검 주기 설정</b> — 각 행 <b>속성</b> 컬럼의 <b>[변경]</b>에서 "
+        "그 장비에 적용할 점검 유형(월간·분기 등)을 지정 (신규 일정 등록 시 이 목록으로 자동 필터)"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
     if st.session_state.pop("just_submitted_equipment", False):
         st.success(
             "새 장비가 등록되었습니다 (QR 상태: PENDING). "
@@ -375,19 +524,23 @@ def render() -> None:
     qr_hint = "QR 부착률" if qr_coverage >= 100 else "미부착 장비 있음"
     render_kpi_row([
         ("전체 시설", f"{kpi['total']:,}", f"이번 달 +{kpi['new_this_month']}건", "default"),
-        ("최근 점검 (지난 48시간)", f"{kpi['recently_inspected']:,}", "", "default"),
+        ("최근 점검 (지난 48시간)", f"{kpi['recently_inspected']:,}", "48h 이내 점검 완료 항목", "default"),
         ("미조치 항목", f"{kpi['pending_issues']}", "긴급 점검 알림", "alert"),
         ("QR 적용률", f"{qr_coverage:.1f}%", qr_hint, qr_variant),
     ])
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
-    f1, f2, _, tab_col = st.columns([0.8, 0.8, 0.4, 3.5])
+    # 전 층 도면을 필터 위에 배치 — 자리만 예약하고 rows 계산 후 채운다 (v1.8 스왑)
+    _floor_preview_slot = st.container()
+
+    f1, f2, cat_col, hide_col = st.columns([0.9, 0.9, 1.7, 1.9])
     with f1:
         floor_filter = st.selectbox(
             "Filter",
             ["전체 층"] + sorted({e.floor for e in eq}),
             label_visibility="collapsed",
+            key="eq_floor_filter",
         )
     with f2:
         sort_by = st.selectbox(
@@ -395,18 +548,29 @@ def render() -> None:
             ["최근 점검순", "위치 순", "상태 순"],
             label_visibility="collapsed",
         )
-    with tab_col:
-        view = st.radio(
-            "view",
-            ["전체", "소화기·소화장치", "경보·감지", "소화전"],
-            horizontal=True,
+    with cat_col:
+        # 장비 종류 필터 (v1.8: 라디오 → 콤보박스, 표시 그룹 재구성)
+        view = st.selectbox(
+            "장비 종류",
+            ["전체", "소화기 · 소화대차", "방화포", "간이소화장치 · 호스릴 소화전",
+             "간이피난유도선", "비상경보장치", "경보 · 감지"],
             label_visibility="collapsed",
+            key="eq_cat_filter",
         )
+    with hide_col:
+        show_retired = st.checkbox(
+            "숨긴 장비 보기", value=False, key="eq_show_retired",
+        )
+        if show_retired:
+            eq = data.load_equipment(include_retired=True)
 
     cat_filter_map = {
-        "소화기·소화장치": {"소화기", "확산소화기", "간이소화장치"},
-        "경보·감지": {"비상경보장치", "가스누설경보기", "감지기", "발신기", "수신기"},
-        "소화전": {"소화전"},
+        "소화기 · 소화대차": {"소화기", "확산소화기"},
+        "방화포": {"방화포"},
+        "간이소화장치 · 호스릴 소화전": {"간이소화장치", "소화전"},
+        "간이피난유도선": {"간이피난유도선"},
+        "비상경보장치": {"비상경보장치"},
+        "경보 · 감지": {"가스누설경보기", "감지기", "발신기", "수신기"},
     }
 
     rows = eq
@@ -423,12 +587,65 @@ def render() -> None:
         order = {"FAIL": 0, "DUE": 1, "PASS": 2}
         rows = sorted(rows, key=lambda e: order.get(e.health_status, 9))
 
-    # ---------- 테이블 (st.columns 기반) ----------
-    st.markdown(_table_header_html(), unsafe_allow_html=True)
+    # ---------- 층 도면 미리보기 (읽기 전용) — 필터 위 예약 슬롯에 렌더 (v1.8 스왑) ----------
+    with _floor_preview_slot:
+        if floor_filter != "전체 층":
+            _fig = _equipment_floor_fig(floor_filter, rows)
+            if _fig is not None:
+                st.markdown(
+                    f"<div style='color:#475569; font-size:0.85rem; margin-bottom:0.3rem;'>"
+                    f"🗺️ <b>{floor_filter}</b> 도면 · 장비 위치 "
+                    f"(🟢 양호 · 🔴 불량 · 🔵 점검도래)</div>",
+                    unsafe_allow_html=True,
+                )
+                st.plotly_chart(
+                    _fig, use_container_width=True,
+                    config={"displayModeBar": False, "staticPlot": True},
+                    key=f"eq_floor_fig_{floor_filter}",
+                )
+        else:
+            # 전체 층 — 전 층 미니맵 그리드 (접기/펼치기, v1.8)
+            with st.expander("🗺️ 전 층 도면 · 장비 위치", expanded=False):
+                st.markdown(
+                    "<div style='color:#475569; font-size:0.85rem; margin-bottom:0.3rem;'>"
+                    "🟢 양호 · 🔴 불량 · 🔵 점검도래 — 아래 <b>층</b> 필터에서 "
+                    "특정 층을 고르면 상세로 이동합니다</div>",
+                    unsafe_allow_html=True,
+                )
+                # 관리자(위치 마스터) 화면처럼 전 층을 건물 순서로 2행 4열 그리드
+                extra = [f for f in sorted({e.floor for e in eq}) if f not in SPOT_FLOORS]
+                eq_floors = SPOT_FLOORS + extra
+                n_cols = 4
+                for row_start in range(0, len(eq_floors), n_cols):
+                    row_floors = eq_floors[row_start:row_start + n_cols]
+                    grid_cols = st.columns(n_cols)
+                    for gcol, fl in zip(grid_cols, row_floors):
+                        with gcol:
+                            fl_eq = [e for e in rows if e.floor == fl]
+                            st.markdown(
+                                f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
+                                f"margin-bottom:0.1rem;'>{fl} "
+                                f"<span style='color:#94A3B8; font-weight:500;'>"
+                                f"({len(fl_eq)})</span></div>",
+                                unsafe_allow_html=True,
+                            )
+                            mini = _equipment_floor_fig(fl, fl_eq, height=170)
+                            if mini is not None:
+                                st.plotly_chart(
+                                    mini, use_container_width=True,
+                                    config={"displayModeBar": False, "staticPlot": True},
+                                    key=f"eq_mini_{fl}",
+                                )
+                            else:
+                                st.caption("(도면 없음)")
 
-    # 작업 상태 계산용 전체 task/notice 한 번만 로드
+    # ---------- 테이블 (st.columns 기반) ----------
+    # 헤더 — 위치 등록/QR 상태/최근 점검 3개 컬럼에 ▾ 설명 팝오버 (위젯)
+    _render_table_header()
+
+    # 점검 이력 계산용 전체 task/deficiency 한 번만 로드
     all_tasks = data.load_tasks()
-    all_notices = data.load_notices()
+    all_defs = data.load_deficiencies()
 
     # 클릭 처리는 루프 후 마지막 한 번만 (dialog는 한 번에 하나)
     open_status_for: str | None = None
@@ -436,35 +653,84 @@ def render() -> None:
     for e in rows:
         cols = st.columns(COL_RATIOS, vertical_alignment="center")
         with cols[0]:
+            # 장비 ID(EQ-NNNN) — 자산 대장의 대표 식별자 (구 위치 ID 자리)
             st.markdown(
-                f"<span style='font-weight:600; color:#0F172A;'>{e.location_id}</span>",
+                f"<div style='font-weight:600; color:#0F172A; "
+                f"text-align:center;'>{e.equipment_id}</div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
             st.markdown(
-                f"<div style='font-weight:600; color:#0F172A;'>{e.equipment_name}</div>"
-                f"<div style='color:#64748B; font-size:0.8rem;'>SN: {e.serial}</div>",
+                f"<div style='font-weight:600; color:#0F172A; "
+                f"text-align:center;'>{e.equipment_name}</div>"
+                f"<div style='color:#64748B; font-size:0.8rem; "
+                f"text-align:center;'>SN: {e.serial}</div>",
                 unsafe_allow_html=True,
             )
         with cols[2]:
-            st.markdown(badge(e.qr_status), unsafe_allow_html=True)
-        with cols[3]:
+            # 적용 가능한 점검 유형 — 텍스트만, '/' 구분, 미등록 시 '-'
+            types_txt = " / ".join(e.inspection_types) if e.inspection_types else "-"
             st.markdown(
-                f"<span style='color:#334155;'>{fmt_date(e.last_inspection)}</span>",
+                f"<div style='color:#334155; font-size:0.82rem; "
+                f"text-align:center; word-break:keep-all;'>{types_txt}</div>",
                 unsafe_allow_html=True,
             )
+        with cols[3]:
+            # 도면 위치(spot) 등록 여부 — 별도 컬럼, 이모지 없이 텍스트
+            registered = bool(e.spot_id)
+            loc_txt = (
+                "<span style='color:#16A34A; font-weight:600; "
+                "font-size:0.82rem;'>등록</span>"
+                if registered else
+                "<span style='color:#D97706; font-weight:600; "
+                "font-size:0.82rem;'>미등록</span>"
+            )
+            st.markdown(f"<div style='text-align:center;'>{loc_txt}</div>",
+                        unsafe_allow_html=True)
         with cols[4]:
-            st.markdown(badge(e.health_status), unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;'>{badge(e.qr_status)}</div>",
+                        unsafe_allow_html=True)
         with cols[5]:
-            color, label = _work_chip(e, all_tasks, all_notices)
-            # 칩 클릭 = 점검 현황 팝업. 버튼 라벨로 칩 디자인 흉내내기 위해 secondary 버튼 + CSS는 어려우므로
-            # 시각적 칩 표시 + 별도 버튼 두 줄. 한 줄에 모두 담기 위해 버튼 라벨 자체에 라벨 사용.
-            if st.button(label, key=f"status_btn_{e.equipment_id}",
+            # 최근 점검일 + 건강상태(점검 결과) 병합 — 가운데 정렬
+            date_txt = fmt_date(e.last_inspection) if e.last_inspection else "미점검"
+            st.markdown(
+                f"<div style='color:#334155; text-align:center;'>{date_txt}</div>"
+                f"<div style='margin-top:0.15rem; text-align:center;'>"
+                f"{badge(e.health_status)}</div>",
+                unsafe_allow_html=True,
+            )
+        with cols[6]:
+            # 점검 이력 — 완료 점검 횟수 표시 + 클릭 시 이력 팝업
+            hist = _equipment_history(e, all_tasks, all_defs)
+            hist_label = f"이력 {len(hist)}회" if hist else "이력 —"
+            if st.button(hist_label, key=f"hist_btn_{e.equipment_id}",
                          use_container_width=True):
                 open_status_for = e.equipment_id
-        with cols[6]:
-            if st.button("속성", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
-                _qr_dialog(e.equipment_id)
+        with cols[7]:
+            # [변경]/[삭제·복구]를 한 줄에 나란히 (세로로 2줄 쌓이지 않게)
+            b_chg, b_act = st.columns(2, gap="small")
+            with b_chg:
+                if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
+                    _qr_dialog(e.equipment_id)
+            with b_act:
+                if e.active:
+                    if st.button("삭제", key=f"eq_retire_{e.equipment_id}",
+                                 use_container_width=True):
+                        data.retire_equipment(e.equipment_id)
+                        st.success(f"{e.equipment_id} 삭제(숨김) 처리되었습니다.")
+                        st.rerun()
+                else:
+                    if st.button("복구", key=f"eq_restore_{e.equipment_id}",
+                                 use_container_width=True):
+                        data.restore_equipment(e.equipment_id)
+                        st.success(f"{e.equipment_id} 복구되었습니다.")
+                        st.rerun()
+            if not e.active:
+                st.markdown(
+                    "<div style='text-align:center; color:#94A3B8; "
+                    "font-size:0.75rem;'>숨김됨</div>",
+                    unsafe_allow_html=True,
+                )
 
     if open_status_for:
         _status_dialog(open_status_for)

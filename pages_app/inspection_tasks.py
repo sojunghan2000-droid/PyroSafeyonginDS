@@ -1,8 +1,10 @@
 """점검 일정 페이지 — v1.4 회차(Round) 단위 표시 + 회차 상세 모달."""
 from __future__ import annotations
 
+import io
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
 from lib import data, auth
@@ -21,6 +23,48 @@ TAB_TO_STATUS = {
 }
 
 ROW_COLS = [1.5, 1.7, 0.9, 1.0, 1.3, 0.9, 0.8]
+
+
+def _audit_log_xlsx() -> bytes:
+    """점검 결과(Deficiency) 감사 로그를 Excel(.xlsx) 바이트로 생성.
+    별지5 원본 데이터를 감사 제출용 평면 표로 정리 (점검일 최신순)."""
+    defs = data.load_deficiencies()
+    task_round = {t.task_id: (t.round_id or "") for t in data.load_tasks()}
+    recs = []
+    for d in sorted(defs, key=lambda x: x.inspection_date or data.TODAY,
+                    reverse=True):
+        is_good = (d.issue or "").strip() in ("", "양호")
+        ng = [k for k, v in (d.checklist_items or {}).items() if v == "NG"]
+        reasons = list(d.defect_codes or [])
+        if d.defect_other:
+            reasons.append(f"기타: {d.defect_other}")
+        recs.append({
+            "점검일": fmt_date(d.inspection_date),
+            "점검 ID": (task_round.get(d.task_id) or "-") if d.task_id else "-",
+            "작업 ID": d.task_id or "-",
+            "층": d.floor,
+            "구역": d.zone,
+            "점검종류": " / ".join(d.inspection_types or []),
+            "결과": "양호" if is_good else "지적",
+            "지적내용": "" if is_good else (d.issue or ""),
+            "불량사유": ", ".join(reasons),
+            "checklist NG": ", ".join(ng),
+            "조치상태": d.resolution or "",
+            "조치완료일": fmt_date(d.action_at) if d.action_at else "",
+            "점검자": d.inspector or "",
+            "확인자": d.confirmer or "",
+            "통보서번호": d.notice_no or "",
+            "기록 ID": d.deficiency_id,
+        })
+    df = pd.DataFrame(recs, columns=[
+        "점검일", "점검 ID", "작업 ID", "층", "구역", "점검종류", "결과",
+        "지적내용", "불량사유", "checklist NG", "조치상태", "조치완료일",
+        "점검자", "확인자", "통보서번호", "기록 ID",
+    ])
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="점검결과 감사로그")
+    return buf.getvalue()
 
 
 def _progress_bar_html(done: int, total: int) -> str:
@@ -47,6 +91,17 @@ def _round_detail_dialog(round_id: str) -> None:
         st.error("회차를 찾을 수 없습니다.")
         return
 
+    # 완료 Task의 '점검 완료' 버튼(disabled)을 파랑 대신 녹색으로
+    st.markdown(
+        "<style>"
+        "[class*='st-key-rnd_start_'] button:disabled{"
+        "background:#16A34A!important;border-color:#16A34A!important;"
+        "opacity:1!important;}"
+        "[class*='st-key-rnd_start_'] button:disabled p{color:#FFFFFF!important;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
     tasks_active = data.tasks_of_round(round_id)
     tasks_all = data.tasks_of_round(round_id, include_excluded=True)
     excluded = [t for t in tasks_all if t.excluded]
@@ -70,11 +125,52 @@ def _round_detail_dialog(round_id: str) -> None:
             unsafe_allow_html=True,
         )
 
-    # 회차 단위 별지5 PDF 다운로드 (지적사항이 1건 이상일 때만 활성)
+    # 취소 상태 배너
+    if r.cancelled:
+        st.markdown(
+            f"<div style='background:#FEF2F2; border:1px solid #FECACA; "
+            f"border-radius:8px; padding:0.5rem 0.8rem; margin:0.2rem 0 0.6rem;'>"
+            f"<b style='color:#B91C1C;'>취소됨</b>"
+            f"<span style='color:#7F1D1D; font-size:0.85rem;'> · 사유: "
+            f"{r.cancel_reason or '-'}"
+            f"{(' · ' + fmt_date(r.cancelled_at)) if r.cancelled_at else ''}"
+            f"{(' · ' + r.cancelled_by) if r.cancelled_by else ''}"
+            f"{' · <b>숨김</b>' if r.archived else ''}</span></div>",
+            unsafe_allow_html=True,
+        )
+
+    # 회차 단위 별지5 PDF + 취소/숨김/복구 액션
     round_task_ids = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
     round_defs = [d for d in data.load_deficiencies() if d.task_id in round_task_ids]
-    pdl, pdr = st.columns([3, 1])
-    with pdr:
+    _sp, c_cancel, c_pdf = st.columns([2, 1, 1])
+    with c_cancel:
+        _cancel_supported = data.round_cancel_supported()
+        _has_completed = any(t.status == "Completed" for t in tasks_all)
+        if _cancel_supported and not r.cancelled and not _has_completed:
+            # 완료 Task가 하나도 없는 회차 — 사유 입력 없이 즉시 삭제(취소+숨김)
+            if st.button("삭제", key=f"round_delete_{round_id}",
+                         use_container_width=True,
+                         help="완료된 점검이 없는 회차를 즉시 삭제(숨김)합니다."):
+                _delete_by = (auth.current_user() or {}).get("name") or "관리자"
+                if data.delete_round(round_id, _delete_by):
+                    st.success(f"{round_id} 삭제되었습니다.")
+                    st.rerun()
+                else:
+                    st.error("삭제할 수 없는 회차입니다.")
+        else:
+            can_cancel = _cancel_supported and (not r.cancelled) and r.status != "Completed"
+            if can_cancel:
+                if st.button("점검 취소", key=f"round_cancel_btn_{round_id}",
+                             use_container_width=True):
+                    st.session_state[f"round_cancel_open_{round_id}"] = True
+            else:
+                _cancel_help = (
+                    "회차 취소 컬럼 마이그레이션이 필요합니다." if not _cancel_supported
+                    else "완료·기취소 회차는 취소할 수 없습니다."
+                )
+                st.button("점검 취소", key=f"round_cancel_dis_{round_id}",
+                          use_container_width=True, disabled=True, help=_cancel_help)
+    with c_pdf:
         if round_defs:
             from pages_app.report_center import _build_pdf_byeolji5
             st.download_button(
@@ -93,6 +189,29 @@ def _round_detail_dialog(round_id: str) -> None:
                 key=f"rnd_pdf_disabled_{round_id}",
             )
 
+    # 점검 취소 사유 입력 (인라인 — 모달 안 모달 불가 회피)
+    if st.session_state.get(f"round_cancel_open_{round_id}"):
+        _reason = st.text_area(
+            "취소 사유", key=f"round_cancel_reason_{round_id}",
+            placeholder="예: 일정 중복 생성 / 작업 취소로 점검 불필요",
+        )
+        _cc1, _cc2 = st.columns(2)
+        with _cc1:
+            if st.button("취소 확정", type="primary", use_container_width=True,
+                         key=f"round_cancel_confirm_{round_id}",
+                         disabled=not _reason.strip()):
+                _by = (auth.current_user() or {}).get("name") or "관리자"
+                if data.cancel_round(round_id, _reason, _by):
+                    st.session_state.pop(f"round_cancel_open_{round_id}", None)
+                    st.rerun()
+                else:
+                    st.error("취소할 수 없는 회차입니다 (완료/기취소).")
+        with _cc2:
+            if st.button("닫기", use_container_width=True,
+                         key=f"round_cancel_close_{round_id}"):
+                st.session_state.pop(f"round_cancel_open_{round_id}", None)
+                st.rerun()
+
     # 활성 Task 리스트 헤더 + [+ 추가] 버튼
     hl, hr = st.columns([3, 1])
     with hl:
@@ -104,7 +223,7 @@ def _round_detail_dialog(round_id: str) -> None:
     add_clicked = False
     with hr:
         if st.button("+ Task 추가", key=f"rnd_add_tsk_{round_id}",
-                     use_container_width=True):
+                     use_container_width=True, disabled=r.cancelled):
             add_clicked = True
     if not tasks_active:
         st.info("이 회차에 점검 대상 장비가 없습니다.")
@@ -145,43 +264,7 @@ def _round_detail_dialog(round_id: str) -> None:
             )
             # 결과 컬럼 — Completed Task에만 inline 결과 카드 (한 행 안에 모든 정보)
             with row[4]:
-                # 오동작 우선 확인 (Malfunction)
-                mal_match = (
-                    next(
-                        (m for m in data.load_malfunctions()
-                         if m.task_id == t.task_id), None,
-                    )
-                    if t.status == "Completed" else None
-                )
-                if mal_match:
-                    m = mal_match
-                    mal_status = "조치 완료" if m.action_done else "조치 대기"
-                    extra = (
-                        f"<div style='color:#92400E; font-size:0.78rem; "
-                        f"margin-top:0.15rem;'>⚠️ {m.detail}</div>"
-                    )
-                    if m.action_done and m.action_note:
-                        extra += (
-                            f"<div style='color:#15803D; font-size:0.78rem; "
-                            f"margin-top:0.1rem;'>✅ {m.action_note}</div>"
-                        )
-                    st.markdown(
-                        f"<div style='padding:0.35rem 0.55rem; background:#F8FAFC; "
-                        f"border-left:3px solid #DC2626; border-radius:6px;'>"
-                        f"<span style='background:#FEE2E2; color:#DC2626; "
-                        f"padding:0.05rem 0.45rem; border-radius:999px; "
-                        f"font-size:0.72rem; font-weight:700;'>오동작</span> "
-                        f"<span style='background:#FEF3C7; color:#92400E; "
-                        f"padding:0.05rem 0.4rem; border-radius:999px; "
-                        f"font-size:0.7rem; font-weight:600; margin-left:0.2rem;'>"
-                        f"{mal_status}</span>"
-                        f"<span style='color:#475569; font-size:0.78rem; "
-                        f"margin-left:0.3rem;'>"
-                        f"{m.confirmer or '-'} · {fmt_date(m.occurred_on)} · {m.category}"
-                        f"</span>{extra}</div>",
-                        unsafe_allow_html=True,
-                    )
-                elif t.status == "Completed":
+                if t.status == "Completed":
                     d = def_by_task.get(t.task_id)
                     if d:
                         is_good = (d.resolution == "완료" and not d.notice_no)
@@ -338,23 +421,40 @@ def render() -> None:
     title_col, action_col = st.columns([2.5, 1.5])
     with title_col:
         page_header(
-            "안전점검",
+            "안전점검 관리",
             "안전점검 회차(Round) 단위로 점검을 진행합니다. 회차 [상세]에서 [점검 시작]으로 별지5 결과를 기록하세요.",
         )
     new_task_clicked = False
-    mal_clicked = False
     with action_col:
-        b1, b2, b3 = st.columns(3)
+        # 상단 2버튼 — 높이 통일 + 글자 길면 자동 줄바꿈 (잘림 방지)
+        st.markdown(
+            "<style>"
+            ".st-key-open_new_task button,"
+            ".st-key-audit_log_export button{"
+            "white-space:normal!important;min-height:3.1rem;height:100%;"
+            "line-height:1.2;padding:0.3rem 0.4rem!important;}"
+            ".st-key-open_new_task button p,"
+            ".st-key-audit_log_export button p{white-space:normal!important;"
+            "word-break:keep-all;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+        b1, b2 = st.columns(2)
         with b1:
             if st.button("신규 일정 등록", type="primary",
                          use_container_width=True, key="open_new_task"):
                 new_task_clicked = True
         with b2:
-            if st.button("오동작 등록", use_container_width=True,
-                         key="open_new_malfunction_insp"):
-                mal_clicked = True
-        with b3:
-            st.button("감사 로그 내보내기", use_container_width=True)
+            st.download_button(
+                "감사 로그 내보내기",
+                data=_audit_log_xlsx(),
+                file_name=f"감사로그_점검결과_{data.TODAY:%Y%m%d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet",
+                use_container_width=True,
+                key="audit_log_export",
+                help="점검 결과(별지5 원본) 전체를 Excel(.xlsx)로 내려받습니다.",
+            )
 
     submitted_round = st.session_state.pop("just_submitted_round", None)
     submitted_ids = st.session_state.pop("just_submitted_tasks", None)
@@ -371,13 +471,6 @@ def render() -> None:
     if new_task_clicked:
         task_dialog()
 
-    # 오동작 등록 — 안전점검 우상단 진입점 (v1.5+)
-    if mal_clicked:
-        from lib.inspection_dialog import malfunction_dialog
-        malfunction_dialog()
-    if st.session_state.pop("just_submitted_malfunction", False):
-        st.success("오동작이 별지9에 등록되었습니다. [작업 조치 관리]에서 조치 입력하세요.")
-
     # 회차 상세 내 [점검 시작] 클릭 시 띄울 모달
     open_task = st.session_state.pop("_open_task_inspect", None)
     if open_task:
@@ -392,13 +485,17 @@ def render() -> None:
     if added_tsk:
         st.success(f"신규 Task {added_tsk} 가 회차에 추가되었습니다.")
 
-    # KPI — 회차 단위 + Task 단위 혼합
-    total_rounds = len(rounds)
-    overdue_rounds = sum(1 for r in rounds if r.status == "Overdue")
-    in_prog_rounds = sum(1 for r in rounds if r.status == "In Progress")
-    completed_rounds = sum(1 for r in rounds if r.status == "Completed")
+    # KPI — 회차 단위 + Task 단위 혼합 (취소·숨김 회차 제외)
+    active_rounds = [r for r in rounds
+                     if not r.cancelled and r.task_type != data.MAL_ROUND_TYPE]
+    cancelled_cnt = sum(1 for r in rounds if r.cancelled and not r.archived)
+    total_rounds = len(active_rounds)
+    overdue_rounds = sum(1 for r in active_rounds if r.status == "Overdue")
+    in_prog_rounds = sum(1 for r in active_rounds if r.status == "In Progress")
+    completed_rounds = sum(1 for r in active_rounds if r.status == "Completed")
     render_kpi_row([
-        ("전체 회차", f"{total_rounds}", "활성 점검 일정", "default"),
+        ("전체 회차", f"{total_rounds}",
+         f"활성 점검 일정{f' · 취소 {cancelled_cnt}' if cancelled_cnt else ''}", "default"),
         ("지연", f"{overdue_rounds}", "즉시 조치 필요",
          "alert" if overdue_rounds else "default"),
         ("진행 중", f"{in_prog_rounds}", "현재 활성", "default"),
@@ -407,27 +504,49 @@ def render() -> None:
 
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
 
-    filter_col, _, tab_col = st.columns([2.5, 2, 3])
+    archived_cnt = sum(1 for r in rounds if r.archived)
+    filter_col, mode_col, tab_col = st.columns([2.1, 1.4, 3])
     with tab_col:
         view = st.radio(
             "tab",
-            ["전체", "진행 중", "예정", "지연", "완료"],
+            ["전체", "진행 중", "예정", "지연", "완료", "취소"],
             horizontal=True,
             label_visibility="collapsed",
             key="tasks_view",
         )
     with filter_col:
-        type_options = ["전체 유형"] + sorted({r.task_type for r in rounds})
+        # 숨김(archived) 회차의 유형은 일반 목록에 안 뜨므로 필터 옵션에서도 제외
+        type_options = ["전체 유형"] + sorted(
+            {r.task_type for r in rounds if not r.archived})
         type_filter = st.selectbox(
             "점검 유형",
             type_options,
             label_visibility="collapsed",
         )
+    with mode_col:
+        # 보기 모드 — 숨긴(취소 후 숨김) 회차는 일반 목록·상태 필터에서 제외
+        view_mode = st.selectbox(
+            "보기",
+            ["일반 목록", "숨긴 회차"],
+            label_visibility="collapsed",
+            key="tasks_view_mode",
+            help=(f"숨긴 회차 {archived_cnt}건 — '숨긴 회차' 선택 시 확인·복구"
+                  if archived_cnt else "숨긴 회차 없음"),
+        )
 
-    visible = rounds
-    target_status = TAB_TO_STATUS.get(view)
-    if target_status:
-        visible = [r for r in visible if r.status == target_status]
+    if view_mode == "숨긴 회차":
+        visible = [r for r in rounds if r.archived]
+    else:
+        visible = [r for r in rounds if not r.archived]
+        if view == "취소":
+            visible = [r for r in visible if r.cancelled]
+        else:
+            target_status = TAB_TO_STATUS.get(view)
+            if target_status:
+                # 특정 상태 탭 — 취소 회차 제외
+                visible = [r for r in visible
+                           if not r.cancelled and r.status == target_status]
+            # "전체"는 취소 포함(숨김 제외) 노출 (취소됨 배지로 구분)
     if type_filter != "전체 유형":
         visible = [r for r in visible if r.task_type == type_filter]
 
@@ -436,7 +555,7 @@ def render() -> None:
         "<div style='display:grid; "
         f"grid-template-columns: {' '.join(f'{r}fr' for r in ROW_COLS)}; "
         "gap:0.4rem; padding:0.55rem 0.4rem; "
-        "color:#64748B; font-size:0.78rem; font-weight:600; "
+        "color:#64748B; font-size:0.78rem; font-weight:600; text-align:center; "
         "border-bottom:1px solid #E2E8F0;'>"
         "<div>점검 ID</div>"
         "<div>점검 유형</div>"
@@ -464,28 +583,20 @@ def render() -> None:
         is_focused = (focus_round == r.round_id)
         cols = st.columns(ROW_COLS, vertical_alignment="center")
         with cols[0]:
-            badges = ""
-            if is_soon:
-                days_left = (r.due_date - today).days
-                day_txt = "오늘 마감" if days_left == 0 else f"D-{days_left}"
-                badges = (
-                    f" <span style='background:#FFEDD5; color:#9A3412; "
-                    f"border:1px solid #F97316; padding:0.1rem 0.4rem; "
-                    f"border-radius:6px; font-size:0.7rem; font-weight:700; "
-                    f"margin-left:0.3rem;'>임박 · {day_txt}</span>"
-                )
             focus_style = (
                 "outline:2px solid #2563EB; outline-offset:2px; border-radius:4px; "
                 if is_focused else ""
             )
             st.markdown(
+                f"<div style='text-align:left;'>"
                 f"<span style='color:#0F172A; font-weight:600; font-size:0.88rem; "
-                f"{focus_style}'>{r.round_id}</span>{badges}",
+                f"{focus_style}'>{r.round_id}</span></div>",
                 unsafe_allow_html=True,
             )
         with cols[1]:
+            # '오동작 접수' 포함 모든 유형을 동일한 일반 텍스트로 표시
             st.markdown(
-                f"<span style='color:#0F172A;'>{r.task_type}</span>",
+                f"<div style='text-align:center; color:#0F172A;'>{r.task_type}</div>",
                 unsafe_allow_html=True,
             )
         with cols[2]:
@@ -494,7 +605,7 @@ def render() -> None:
                               if r.assignee in ("", "Unassigned", "미지정")
                               else "color:#334155;")
             st.markdown(
-                f"<span style='{assignee_style}'>{assignee_label}</span>",
+                f"<div style='text-align:center; {assignee_style}'>{assignee_label}</div>",
                 unsafe_allow_html=True,
             )
         due_color = (
@@ -504,22 +615,59 @@ def render() -> None:
         )
         with cols[3]:
             st.markdown(
-                f"<span style='color:{due_color}; font-weight:600;'>"
-                f"{fmt_date(r.due_date)}</span>",
+                f"<div style='text-align:center; color:{due_color}; font-weight:600;'>"
+                f"{fmt_date(r.due_date)}</div>",
                 unsafe_allow_html=True,
             )
         done, total = data.round_progress(r.round_id)
         with cols[4]:
-            st.markdown(_progress_bar_html(done, total), unsafe_allow_html=True)
+            if r.cancelled:
+                st.markdown("<div style='text-align:center; color:#CBD5E1;'>—</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    f"<div style='text-align:center;'>{_progress_bar_html(done, total)}</div>",
+                    unsafe_allow_html=True,
+                )
         with cols[5]:
-            st.markdown(
-                badge(TASK_STATUS_KO.get(r.status, r.status)),
-                unsafe_allow_html=True,
-            )
+            if r.archived:
+                st.markdown(
+                    "<div style='text-align:center;'>"
+                    "<span style='background:#F1F5F9; color:#64748B; "
+                    "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
+                    "font-weight:600;'>숨김</span></div>",
+                    unsafe_allow_html=True,
+                )
+            elif r.cancelled:
+                st.markdown(
+                    "<div style='text-align:center;'>"
+                    "<span style='background:#FEE2E2; color:#B91C1C; "
+                    "padding:0.15rem 0.5rem; border-radius:6px; font-size:0.8rem; "
+                    "font-weight:600;'>취소됨</span></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div style='text-align:center;'>"
+                    f"{badge(TASK_STATUS_KO.get(r.status, r.status))}</div>",
+                    unsafe_allow_html=True,
+                )
         with cols[6]:
             if st.button("점검", key=f"rnd_open_{r.round_id}",
                          use_container_width=True, type="primary"):
                 open_detail = r.round_id
+            # 숨김: '취소' 필터에서만 / 복구: '숨긴 회차' 보기에서만
+            if view_mode == "숨긴 회차" and r.archived:
+                if st.button("복구", key=f"rnd_restore_{r.round_id}",
+                             use_container_width=True):
+                    if data.restore_round(r.round_id):
+                        st.rerun()
+            elif view == "취소" and r.cancelled and not r.archived:
+                if st.button("숨김", key=f"rnd_hide_{r.round_id}",
+                             use_container_width=True,
+                             help="기록은 보존되고 목록에서만 숨겨집니다 (복구 가능)"):
+                    if data.archive_round(r.round_id):
+                        st.rerun()
 
     if open_detail:
         _round_detail_dialog(open_detail)
@@ -528,6 +676,6 @@ def render() -> None:
     with foot_l:
         st.markdown(
             f"<div style='color:#64748B; font-size:0.85rem; padding-top:0.6rem;'>"
-            f"{total_rounds}개 회차 중 {len(visible)}개 표시 · 활성 Task {len(active_tasks)}건</div>",
+            f"{len(rounds)}개 회차 중 {len(visible)}개 표시 · 활성 Task {len(active_tasks)}건</div>",
             unsafe_allow_html=True,
         )

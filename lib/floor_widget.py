@@ -19,15 +19,16 @@ LEGEND_ITEMS = [
 ]
 
 
-def floor_legend_html() -> str:
-    """도면 색상 범례 HTML 한 줄. flex 레이아웃으로 도면 위/아래 어디든 배치 가능."""
+def legend_html(items) -> str:
+    """(color, label) 목록으로 인라인 색상 범례 HTML 생성.
+    화면마다 실제 마커에 맞는 범례를 전달해 사용 (건강상태 외 spot 선택 등)."""
     items_html = "".join(
         f"<span style='display:inline-flex; align-items:center; gap:0.3rem; "
         f"font-size:0.78rem; color:#475569;'>"
         f"<span style='display:inline-block; width:0.7rem; height:0.7rem; "
         f"border-radius:50%; background:{c}; "
         f"border:1px solid rgba(0,0,0,0.08);'></span>{label}</span>"
-        for c, label in LEGEND_ITEMS
+        for c, label in items
     )
     return (
         "<div style='display:flex; flex-wrap:wrap; gap:0.9rem; align-items:center; "
@@ -36,6 +37,11 @@ def floor_legend_html() -> str:
         f"{items_html}"
         "</div>"
     )
+
+
+def floor_legend_html() -> str:
+    """도면 색상 범례 (대시보드 장비 건강상태 5종). flex 레이아웃."""
+    return legend_html(LEGEND_ITEMS)
 
 
 def control_toggle(key: str, default_locked: bool = True) -> bool:
@@ -48,11 +54,13 @@ def control_toggle(key: str, default_locked: bool = True) -> bool:
     같은 rerun에서 새 값을 반환. session_state에도 자동 저장(widget key 동일).
     """
     state_key = f"floor_lock_btn_{key}"
+    # key= 가 session_state[state_key] 와 자동 바인딩되므로 value= 를 함께 주면
+    # "created with a default value but also had its value set via Session State"
+    # 경고가 뜬다 → 초기값만 세팅하고 value= 는 생략한다.
     if state_key not in st.session_state:
         st.session_state[state_key] = default_locked
     locked = st.toggle(
         "🔒 도면 잠금",
-        value=st.session_state[state_key],
         key=state_key,
         help="ON = 잠금(pan/zoom 비활성·modebar 숨김) / OFF = 조작 가능",
     )

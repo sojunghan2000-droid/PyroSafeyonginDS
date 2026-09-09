@@ -115,6 +115,12 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
     # 데이터 행
     types_all = ["임시소방시설", "피난로 등", "화기취급감독"]
     deficiencies = data.load_deficiencies()
+    # 260907: 가설컨테이너 사무실 점검은 별지5 법정 3종에 해당하지 않아 여기서 제외하고
+    # "점검결과 보고 · 사진대지"에서 다룬다.
+    deficiencies = [
+        d for d in deficiencies
+        if data.INSPECTION_KIND_CONTAINER not in d.inspection_types
+    ]
     # task_id → equipment_label 매핑 (지적사항 컬럼 prefix용)
     task_label_map = {t.task_id: t.equipment_label for t in data.load_tasks()}
     if round_id:
@@ -126,9 +132,39 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
             f"• {t}( {'O' if t in d.inspection_types else '&nbsp;'} )" for t in types_all
         ]
         # 지적사항 컬럼 형식: "장비명 (양호 또는 지적내용)" — v1.5+
+        # v1.6: defect_codes 카탈로그가 있으면 "불량 — 사유: ..." 형태로 명시
+        # v1.7: checklist_items의 NG 항목을 요약해 함께 표시
         eq_label = task_label_map.get(d.task_id, "")
         is_good = (d.resolution == "완료" and not d.notice_no)
-        body = "양호" if is_good else (d.issue or "지적사항 없음")
+        # NG 항목 추출: "카테고리|항목" 또는 "항목" 형식 키에서 "|" 이후만 사용
+        ng_items = []
+        ci = getattr(d, "checklist_items", None) or {}
+        for k, v in ci.items():
+            if str(v).upper() == "NG":
+                label = k.split("|", 1)[1] if "|" in k else k
+                ng_items.append(label)
+        ng_summary = ", ".join(ng_items)
+        if is_good:
+            body = "양호"
+        elif d.defect_codes:
+            codes_display = [
+                c if c != "기타" else (f"기타: {d.defect_other}" if d.defect_other else "기타")
+                for c in d.defect_codes
+            ]
+            reasons = " · ".join(codes_display)
+            # issue가 사유 join + ' — 추가내용' 형식이면 추가내용만 분리해 덧붙임
+            extra = ""
+            if d.issue and " — " in d.issue:
+                extra = d.issue.split(" — ", 1)[1].strip()
+            body = f"불량 — 사유: {reasons}"
+            if extra:
+                body = f"{body} ({extra})"
+            if ng_summary:
+                body = f"{body} [NG: {ng_summary}]"
+        elif ng_summary:
+            body = f"불량 — NG: {ng_summary}"
+        else:
+            body = d.issue or "지적사항 없음"
         issue_text = f"{eq_label} ({body})" if eq_label else body
         rows.append([
             Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),
@@ -169,9 +205,11 @@ def _build_pdf_byeolji5(round_id: str | None = None) -> bytes:
 # 출력 양식은 동일 — 보고서 내용 변경 없음.
 
 def _byeolji6_get_photo(item) -> bytes | None:
-    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환)."""
-    # 신모델: Deficiency.action_photo_path → Storage 다운로드
-    path = getattr(item, "action_photo_path", None)
+    """Deficiency 또는 Notice 양쪽에서 조치 사진 bytes를 가져옴 (호환).
+    Deficiency는 action_photo_path(조치 후) 우선, 없으면 photo_path(발견 시) 폴백
+    — 조치 미확정(action_immediate=False) 상태에서도 최소 발견 사진은 표시."""
+    # 신모델: Deficiency.action_photo_path → Storage 다운로드 (없으면 photo_path 폴백)
+    path = getattr(item, "action_photo_path", None) or getattr(item, "photo_path", None)
     if path:
         try:
             return data._db().storage.from_(data.ACTION_PHOTO_BUCKET).download(path)
@@ -334,6 +372,186 @@ def _build_pdf_byeolji6(notice=None) -> bytes:
     return _build_pdf_byeolji6_multi([notice])
 
 
+# ---------- 사진 다운로드 공용 헬퍼 (photo_path/action_photo_path/inspection_photo_path 공용) ----------
+
+def _download_photo(path: str | None) -> bytes | None:
+    """임의의 Storage 경로에서 사진 bytes를 가져옴."""
+    if not path:
+        return None
+    try:
+        return data._db().storage.from_(data.ACTION_PHOTO_BUCKET).download(path)
+    except Exception:
+        return None
+
+
+# ---------- 점검결과 보고 / 사진대지 전·후 — 260907 신규 (분리된 독립 PDF 2종) ----------
+
+def _report_photos_for(d) -> tuple[str | None, str | None]:
+    """점검결과 보고용 대표 사진(최대 2장) — 결과 무관 점검사진 우선, 없으면 조치 전/후
+    사진으로 대체. 1/2번째는 같은 종류에서만 짝지어 반환한다(종류를 섞지 않음)."""
+    if d.inspection_photo_path:
+        return d.inspection_photo_path, d.inspection_photo_path2
+    if d.photo_path:
+        return d.photo_path, d.photo_path2
+    if d.action_photo_path:
+        return d.action_photo_path, d.action_photo_path2
+    return None, None
+
+
+def _build_pdf_inspection_photo_report(round_id: str | None = None) -> bytes:
+    """점검결과 보고 — 사진이 하나라도 등록된 점검은 전부(점검종류 구분 없이) 포함."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle, Spacer
+
+    s = _styles()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=15 * mm, bottomMargin=15 * mm,
+    )
+
+    deficiencies = data.load_deficiencies()
+    if round_id:
+        round_tasks = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
+        deficiencies = [d for d in deficiencies if d.task_id in round_tasks]
+
+    # 사진이 하나라도(inspection_photo_path/photo_path/action_photo_path 무엇이든) 있으면 포함.
+    with_any_photo = [d for d in deficiencies if _report_photos_for(d)[0]]
+
+    flowables = []
+    flowables.append(Paragraph("점검결과 보고", s["title"]))
+    flowables.append(Paragraph(
+        "위치사면: ______________&nbsp;&nbsp;&nbsp; 점검일: ______________&nbsp;&nbsp;&nbsp; "
+        "점검자: ______________&nbsp;&nbsp;&nbsp; 조치완료일: ______________",
+        s["left"],
+    ))
+    flowables.append(Spacer(1, 3 * mm))
+    # 원본 양식 기준: 점검구간 1개당 사진 2칸(점검사진). v1.9(260907): 2번째 사진이 실제로
+    # 등록되어 있으면 그대로 채우고, 없으면 비워둔다(수기로 추가 사진을 붙일 여백).
+    # 표 틀은 데이터 유무와 무관하게 항상 노출 — 데이터가 없거나 적으면 빈 행으로 채워 최소
+    # 5행(별지5의 "빈 행" 관례와 동일한 취지) 이상을 유지한다.
+    COL_W_A = [30 * mm, 75 * mm, 75 * mm]  # 180mm 합
+    rows = [[Paragraph("점검구간", s["h"]), Paragraph("점검 사진", s["h"]), ""]]
+    row_heights = [8 * mm]
+    span_styles = [("SPAN", (1, 0), (2, 0))]
+    for d in with_any_photo:
+        p1, p2 = _report_photos_for(d)
+        photo1 = _photo_image(_download_photo(p1), max_w_mm=70, max_h_mm=48)
+        photo2 = _photo_image(_download_photo(p2), max_w_mm=70, max_h_mm=48) if p2 else None
+        caption = Paragraph(d.issue or "", s["cell"])  # 원본 양식처럼 사진 밑에 설명(지적사항) 표기
+        cell1 = [photo1, caption] if photo1 else [caption]
+        cell2 = [photo2] if photo2 else [Paragraph("", s["cell"])]
+        rows.append([
+            Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),
+            cell1,
+            cell2,
+        ])
+        row_heights.append(60 * mm)
+    while len(rows) - 1 < 5:
+        rows.append(["", "", ""])
+        row_heights.append(60 * mm)
+    tbl = Table(rows, colWidths=COL_W_A, rowHeights=row_heights, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
+    ] + span_styles))
+    flowables.append(tbl)
+
+    doc.build(flowables)
+    return buf.getvalue()
+
+
+def _build_pdf_before_after_report(round_id: str | None = None) -> bytes:
+    """사진대지 전/후 — 조치 전 사진(photo_path)이 있는 점검은 전부 포함.
+    조치 후 사진(action_photo_path)은 등록되어 있고 조치 전과 다른 사진일 때만 채우고,
+    없으면 해당 칸만 비워둔다(행 자체는 제외하지 않음)."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+
+    s = _styles()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=15 * mm, bottomMargin=15 * mm,
+    )
+
+    deficiencies = data.load_deficiencies()
+    if round_id:
+        round_tasks = {t.task_id for t in data.tasks_of_round(round_id, include_excluded=True)}
+        deficiencies = [d for d in deficiencies if d.task_id in round_tasks]
+
+    # "전" 사진(photo_path)이 있으면 전부 포함 — "후"는 있으면 채우고 없으면 빈칸.
+    with_before = [d for d in deficiencies if d.photo_path]
+
+    flowables = []
+    flowables.append(Paragraph("지적사항 조치 전/후 사진대지", s["title"]))
+    # 표 틀은 데이터 유무와 무관하게 항상 노출 — 최소 5행 유지.
+    COL_W_B = [30 * mm, 75 * mm, 75 * mm]
+    rows = [[Paragraph("점검구간", s["h"]), Paragraph("조치 前", s["h"]), Paragraph("조치 後", s["h"])]]
+    row_heights = [8 * mm]
+    for d in with_before:
+        # v1.9(260907): 전/후 각각 최대 2장(사진2가 있으면 같은 칸에 세로로 함께 표시)
+        # + 점검결과 보고와 동일하게 사진 밑에 지적사항(issue) 캡션 표시
+        caption_text = d.issue or ""
+        before1 = _photo_image(_download_photo(d.photo_path), max_w_mm=70, max_h_mm=22)
+        before2 = (
+            _photo_image(_download_photo(d.photo_path2), max_w_mm=70, max_h_mm=22)
+            if d.photo_path2 else None
+        )
+        # "전"은 photo_path가 있다고 필터링된 상태라, 사진이 안 뜨면 다운로드 실패로 간주.
+        before_photos = [p for p in (before1, before2) if p]
+        before_body = before_photos if before_photos else [Paragraph("사진 로드 실패", s["cell"])]
+        before_cell = before_body + [Paragraph(caption_text, s["cell"])]
+
+        has_after = d.action_photo_path and d.action_photo_path != d.photo_path
+        after1 = (
+            _photo_image(_download_photo(d.action_photo_path), max_w_mm=70, max_h_mm=22)
+            if has_after else None
+        )
+        has_after2 = d.action_photo_path2 and d.action_photo_path2 != d.photo_path2
+        after2 = (
+            _photo_image(_download_photo(d.action_photo_path2), max_w_mm=70, max_h_mm=22)
+            if has_after2 else None
+        )
+        after_photos = [p for p in (after1, after2) if p]
+        # 후 사진이 원래 없으면(has_after=False) 빈 칸, 있는데 다운로드만 실패했으면 실패 문구.
+        if after_photos:
+            after_body = after_photos
+        elif has_after or has_after2:
+            after_body = [Paragraph("사진 로드 실패", s["cell"])]
+        else:
+            after_body = [Paragraph("", s["cell"])]
+        # 점검결과 보고와 동일하게 캡션은 항상 표시(사진 로드 실패 여부와 무관).
+        after_cell = after_body + [Paragraph(caption_text, s["cell"])]
+
+        rows.append([
+            Paragraph(f"{d.floor}<br/>{d.zone}", s["cell"]),
+            before_cell,
+            after_cell,
+        ])
+        row_heights.append(60 * mm)
+    while len(rows) - 1 < 5:
+        rows.append(["", "", ""])
+        row_heights.append(60 * mm)
+    tbl = Table(rows, colWidths=COL_W_B, rowHeights=row_heights, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
+    ]))
+    flowables.append(tbl)
+
+    doc.build(flowables)
+    return buf.getvalue()
+
+
 # ---------- 별지9 소방시설 오동작 관리대장 ----------
 
 TEMP_CATEGORIES = ["소화기", "간이소화장치", "비상경보장치", "가스누설경보기", "간이피난유도선", "방화포"]
@@ -448,15 +666,6 @@ def render() -> None:
                 "한글 폰트(NanumGothic / 시스템 폰트) 등록 실패. PDF의 한글이 □로 출력될 수 있습니다."
             )
 
-    def _card_header(name: str, sub: str) -> str:
-        return (
-            "<div style='background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px 12px 0 0;"
-            " padding:1rem 1.1rem 0.5rem; border-bottom:none;'>"
-            f"<div style='font-weight:700; color:#0F172A; font-size:1.1rem;'>{name}</div>"
-            f"<div style='color:#64748B; font-size:0.88rem; margin-top:0.3rem;'>{sub}</div>"
-            "</div>"
-        )
-
     def _section_title(name: str, desc: str) -> None:
         st.markdown(
             f"<div style='font-weight:700; color:#0F172A; font-size:1.05rem;'>{name}</div>"
@@ -469,33 +678,59 @@ def render() -> None:
 
     # ---------- 별지5 ----------
     _section_title("별지5 · 안전점검 결과 지적내역서",
-                   "현장 점검에서 발견된 모든 지적사항(완료/불가)을 일괄 PDF로 출력합니다.")
-    _, mid5, _ = st.columns([1, 2, 1])
+                   "점검이 완료된(결과 입력된) 지적사항을 PDF로 출력합니다. "
+                   "전체 또는 특정 회차를 선택할 수 있습니다.")
+    mid5, _ = st.columns([2, 1])
     with mid5:
-        st.markdown(_card_header("별지5", "안전점검 결과 지적내역서"), unsafe_allow_html=True)
-        st.download_button(
-            "Download 별지5 PDF",
-            data=_build_pdf_byeolji5(),
-            file_name="별지 5. 안전점검 결과 지적 내역서.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            type="primary",
-        )
+        # 출력 범위 — 전체 또는 특정 회차만 (round_id 필터). 출력 기준은 점검 완료(Deficiency) 유지.
+        # 260907: 가설컨테이너 사무실 점검은 별지5 대상이 아니므로 건수에서도 제외(PDF와 일치).
+        _task_round = {t.task_id: t.round_id for t in data.load_tasks() if t.round_id}
+        _cnt: dict[str, int] = {}
+        for _d in data.load_deficiencies():
+            if data.INSPECTION_KIND_CONTAINER in _d.inspection_types:
+                continue
+            _rid = _task_round.get(_d.task_id)
+            if _rid:
+                _cnt[_rid] = _cnt.get(_rid, 0) + 1
+        _opts = {"전체 (모든 회차)": None}
+        for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+            if getattr(_r, "cancelled", False) or _r.task_type == data.MAL_ROUND_TYPE:
+                continue  # 취소·오동작 접수 회차 제외
+            _opts[f"{_r.round_id} · {_r.task_type} · {_cnt.get(_r.round_id, 0)}건"] = _r.round_id
+        _scope_col, _btn_col = st.columns([2.2, 1.3], vertical_alignment="bottom")
+        with _scope_col:
+            _sel_label = st.selectbox("출력 범위", list(_opts.keys()), key="byeolji5_scope")
+        _sel_round = _opts[_sel_label]
+        _fname = (f"별지 5. 안전점검 결과 지적 내역서 - {_sel_round}.pdf"
+                  if _sel_round else "별지 5. 안전점검 결과 지적 내역서.pdf")
+        with _btn_col:
+            st.download_button(
+                "Download 별지5 PDF",
+                data=_build_pdf_byeolji5(_sel_round),
+                file_name=_fname,
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+            )
     _spacer()
 
     # ---------- 별지6 ----------
     _section_title("별지6 · 안전점검 조치 결과 통보서",
-                   "조치 완료된 통보서를 1건씩 선택해 PDF로 출력합니다. 사진과 조치 내용이 자동 포함됩니다.")
-    _, mid6, _ = st.columns([1, 2, 1])
+                   "조치 완료된 통보서를 전체 또는 특정 회차로 묶어 PDF로 출력합니다. "
+                   "사진과 조치 내용이 자동 포함됩니다.")
+    mid6, _ = st.columns([2, 1])
     with mid6:
-        st.markdown(_card_header("별지6", "안전점검 조치 결과 통보서"), unsafe_allow_html=True)
-        # v1.5: 자료원이 Notice → Deficiency.action_*. 통보서가 발급된 (notice_no 있음)
-        # Deficiency 중 조치 완료된 행이 별지6 출력 대상.
-        all_defs = [d for d in data.load_deficiencies() if d.notice_no]
+        # v1.5: 자료원이 Notice → Deficiency.action_*. 통보서가 발급된(notice_no) +
+        # 조치 완료(action_done)된 Deficiency가 별지6 출력 대상.
+        # 260907: 가설컨테이너 사무실 점검은 법정 통보서 대상이 아니므로 제외 — 별지5와 동일한
+        # 원칙, 조치 전/후 결과는 "점검결과 보고 · 사진대지" 섹션 B에서 다룬다.
+        all_defs = [
+            d for d in data.load_deficiencies()
+            if d.notice_no and data.INSPECTION_KIND_CONTAINER not in d.inspection_types
+        ]
         done = [d for d in all_defs if d.action_done]
         pending = [d for d in all_defs if not d.action_done]
-        notices = all_defs  # 이하 로직 호환용 alias
-        if not notices:
+        if not all_defs:
             st.info("발급된 통보서가 없습니다.")
         elif not done:
             st.warning(
@@ -503,66 +738,53 @@ def render() -> None:
                 "**지적 관리**에서 '조치 폼'을 먼저 작성하세요."
             )
         else:
-            opts = [
-                f"{n.notice_no} · {n.floor}/{n.zone} · {n.issue[:18]}"
-                for n in done
-            ]
-            all_indices = list(range(len(opts)))
-
-            # 모두 선택 / 일괄 해제 버튼
-            sel_col, clr_col = st.columns(2)
-            with sel_col:
-                if st.button("모두 선택", key="notice_select_all",
-                             use_container_width=True):
-                    st.session_state["notice_multiselect"] = all_indices
-                    st.rerun()
-            with clr_col:
-                if st.button("일괄 해제", key="notice_clear_all",
-                             use_container_width=True):
-                    st.session_state["notice_multiselect"] = []
-                    st.rerun()
-
-            # default 인자는 key 사용 시 무시되며 경고가 나므로 생략.
-            # 모두 선택/일괄 해제 버튼이 session_state["notice_multiselect"]를 직접 세팅.
-            sel_idxs = st.multiselect(
-                "통보서 선택 (조치 완료된 항목만, 다중 선택 가능)",
-                options=all_indices,
-                format_func=lambda i: opts[i],
-                key="notice_multiselect",
-                label_visibility="collapsed",
-                placeholder="통보서를 선택하세요 (여러 건 선택 가능)",
-            )
-            sel_notices = [done[i] for i in sel_idxs]
+            # 출력 범위 — 전체 또는 특정 회차 (별지5와 동일 드롭다운 패턴).
+            # 회차 매핑은 task_id → round_id, 카운트는 조치 완료 통보서 기준.
+            _task_round6 = {t.task_id: t.round_id for t in data.load_tasks() if t.round_id}
+            _cnt6: dict[str, int] = {}
+            for _d in done:
+                _rid6 = _task_round6.get(_d.task_id)
+                if _rid6:
+                    _cnt6[_rid6] = _cnt6.get(_rid6, 0) + 1
+            _opts6 = {f"전체 (모든 회차 · {len(done)}건)": None}
+            for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+                if getattr(_r, "cancelled", False):
+                    continue  # 취소 회차 제외
+                if _cnt6.get(_r.round_id, 0) > 0:
+                    _opts6[f"{_r.round_id} · {_r.task_type} · {_cnt6[_r.round_id]}건"] = _r.round_id
+            _scope_col6, _btn_col6 = st.columns([2.2, 1.3], vertical_alignment="bottom")
+            with _scope_col6:
+                _sel_label6 = st.selectbox("출력 범위", list(_opts6.keys()),
+                                           key="byeolji6_scope")
+            _sel_round6 = _opts6[_sel_label6]
+            if _sel_round6:
+                _round_tasks6 = {
+                    t.task_id
+                    for t in data.tasks_of_round(_sel_round6, include_excluded=True)
+                }
+                sel_notices = [d for d in done if d.task_id in _round_tasks6]
+            else:
+                sel_notices = done
 
             n_sel = len(sel_notices)
-            if n_sel == 0:
-                st.button(
-                    "통보서를 선택하면 다운로드 가능",
-                    use_container_width=True,
-                    disabled=True,
-                    key="notice_dl_disabled",
-                )
-            elif n_sel == 1:
-                only = sel_notices[0]
-                st.download_button(
-                    f"Download {only.notice_no}",
-                    data=_build_pdf_byeolji6(only),
-                    file_name=f"별지 6. 안전점검 조치 결과 통보서 ({only.notice_no}).pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                    key="notice_dl_single",
-                )
+            _today6 = data.TODAY.isoformat()
+            if _sel_round6:
+                _fname6 = (f"별지 6. 안전점검 조치 결과 통보서 "
+                           f"({_sel_round6}, {n_sel}건).pdf")
             else:
-                today = data.TODAY.isoformat()
+                _fname6 = (f"별지 6. 안전점검 조치 결과 통보서 "
+                           f"(전체 {n_sel}건, {_today6}).pdf")
+            _btn_label6 = (f"Download 별지6 합본 PDF · {n_sel}건" if n_sel > 1
+                           else f"Download 별지6 PDF · {n_sel}건")
+            with _btn_col6:
                 st.download_button(
-                    f"Download {n_sel}건 합본 PDF",
+                    _btn_label6,
                     data=_build_pdf_byeolji6_multi(sel_notices),
-                    file_name=f"별지 6. 안전점검 조치 결과 통보서 (합본 {n_sel}건, {today}).pdf",
+                    file_name=_fname6,
                     mime="application/pdf",
                     use_container_width=True,
                     type="primary",
-                    key="notice_dl_multi",
+                    key="notice_dl",
                 )
 
             if pending:
@@ -573,33 +795,102 @@ def render() -> None:
                 )
     _spacer()
 
-    # ---------- 별지9 ----------
-    _section_title("별지9 · 소방시설 오동작 관리대장",
-                   "임시소방시설 6종 + 기타 6종 카테고리의 오동작 기록을 PDF로 출력합니다.")
-    _, mid9, _ = st.columns([1, 2, 1])
-    with mid9:
-        st.markdown(_card_header("별지9", "소방시설 오동작 관리대장"), unsafe_allow_html=True)
-        st.download_button(
-            "Download 별지9 PDF",
-            data=_build_pdf_byeolji9(),
-            file_name="별지 9. 소방시설 오동작 관리대장.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            type="primary",
-        )
+    # ---------- 점검결과 보고 (260907 신규, 별지5/6과 동일하게 독립 PDF) ----------
+    _section_title("점검결과 보고",
+                   "별지5 법정 서식 외 범용 사진 증빙 보고서. "
+                   "사진이 하나라도 등록된 점검은 점검종류 구분 없이 모두 포함됩니다.")
+    midp, _ = st.columns([2, 1])
+    with midp:
+        _task_roundp = {t.task_id: t.round_id for t in data.load_tasks() if t.round_id}
+        _cntp: dict[str, int] = {}
+        for _d in data.load_deficiencies():
+            _ridp = _task_roundp.get(_d.task_id)
+            if _ridp and _report_photos_for(_d)[0]:
+                _cntp[_ridp] = _cntp.get(_ridp, 0) + 1
+        _optsp = {f"전체 (모든 회차 · {sum(_cntp.values())}건)": None}
+        for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+            if getattr(_r, "cancelled", False) or _r.task_type == data.MAL_ROUND_TYPE:
+                continue
+            if _cntp.get(_r.round_id, 0) > 0:
+                _optsp[f"{_r.round_id} · {_r.task_type} · {_cntp[_r.round_id]}건"] = _r.round_id
+        _scope_colp, _btn_colp = st.columns([2.2, 1.3], vertical_alignment="bottom")
+        with _scope_colp:
+            _sel_labelp = st.selectbox("출력 범위", list(_optsp.keys()), key="insp_photo_report_scope")
+        _sel_roundp = _optsp[_sel_labelp]
+        _fnamep = (f"점검결과 보고 - {_sel_roundp}.pdf" if _sel_roundp else "점검결과 보고.pdf")
+        with _btn_colp:
+            st.download_button(
+                "Download 점검결과 보고 PDF",
+                data=_build_pdf_inspection_photo_report(_sel_roundp),
+                file_name=_fnamep,
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="insp_photo_report_dl",
+            )
+    _spacer()
+
+    # ---------- 사진대지 전/후 (260907 신규, 독립 PDF) ----------
+    _section_title("사진대지 전/후",
+                   "지적사항 조치 전/후 비교 사진대지. "
+                   "조치 전 사진이 등록된 지적사항은 모두 포함되며, 조치 후 사진은 등록되면 함께 표시됩니다.")
+    midba, _ = st.columns([2, 1])
+    with midba:
+        _task_roundba = {t.task_id: t.round_id for t in data.load_tasks() if t.round_id}
+        _cntba: dict[str, int] = {}
+        for _d in data.load_deficiencies():
+            _ridba = _task_roundba.get(_d.task_id)
+            if _ridba and _d.photo_path:
+                _cntba[_ridba] = _cntba.get(_ridba, 0) + 1
+        _optsba = {f"전체 (모든 회차 · {sum(_cntba.values())}건)": None}
+        for _r in sorted(data.load_rounds(), key=lambda x: x.due_date, reverse=True):
+            if getattr(_r, "cancelled", False) or _r.task_type == data.MAL_ROUND_TYPE:
+                continue
+            if _cntba.get(_r.round_id, 0) > 0:
+                _optsba[f"{_r.round_id} · {_r.task_type} · {_cntba[_r.round_id]}건"] = _r.round_id
+        _scope_colba, _btn_colba = st.columns([2.2, 1.3], vertical_alignment="bottom")
+        with _scope_colba:
+            _sel_labelba = st.selectbox("출력 범위", list(_optsba.keys()), key="before_after_report_scope")
+        _sel_roundba = _optsba[_sel_labelba]
+        _fnameba = (f"사진대지 전후 - {_sel_roundba}.pdf" if _sel_roundba else "사진대지 전후.pdf")
+        with _btn_colba:
+            st.download_button(
+                "Download 사진대지 전/후 PDF",
+                data=_build_pdf_before_after_report(_sel_roundba),
+                file_name=_fnameba,
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="before_after_report_dl",
+            )
     _spacer()
 
     # ---------- QR 스티커 ----------
     _section_title("QR 스티커",
-                   "전체 장비의 QR 스티커를 A4 한 페이지당 4×6 그리드(24개)로 출력합니다.")
-    _, midq, _ = st.columns([1, 2, 1])
+                   "장비의 QR 스티커를 A4 한 페이지당 4×6 그리드(24개)로 출력합니다. "
+                   "전체 또는 특정 층만 선택할 수 있습니다.")
+    midq, _ = st.columns([2, 1])
     with midq:
-        st.markdown(_card_header("QR 스티커 시트", "전체 장비 · A4 4×6 그리드"), unsafe_allow_html=True)
-        st.download_button(
-            "Download QR 스티커 시트",
-            data=sticker_sheet_pdf(data.load_equipment()),
-            file_name="QR 스티커 시트 (4x6).pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            type="primary",
+        from pages_app.dashboard import LOCATION_FLOORS
+        _scope_colq, _btn_colq = st.columns([2.2, 1.3], vertical_alignment="bottom")
+        with _scope_colq:
+            _sel_floor_q = st.selectbox(
+                "출력 범위", ["전체 (모든 층)"] + list(LOCATION_FLOORS),
+                key="qr_sticker_floor",
+            )
+        _qr_eq = data.load_equipment()
+        if _sel_floor_q != "전체 (모든 층)":
+            _qr_eq = [e for e in _qr_eq if e.floor == _sel_floor_q]
+        _fname_q = (
+            f"QR 스티커 시트 ({_sel_floor_q}, 4x6).pdf"
+            if _sel_floor_q != "전체 (모든 층)" else "QR 스티커 시트 (4x6).pdf"
         )
+        with _btn_colq:
+            st.download_button(
+                f"Download QR 스티커 시트 · {len(_qr_eq)}건",
+                data=sticker_sheet_pdf(_qr_eq),
+                file_name=_fname_q,
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+            )

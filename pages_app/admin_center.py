@@ -13,7 +13,7 @@ import streamlit as st
 
 from lib import auth, data
 from lib.data import Spot
-from lib.floor_widget import control_toggle, floor_legend_html, plotly_config
+from lib.floor_widget import control_toggle, legend_html, plotly_config
 from lib.ui import badge, page_header
 
 # 새 8개 층 (대시보드 Location 탭과 동일 순서)
@@ -32,8 +32,11 @@ def _floor_image_uri(floor: str) -> str | None:
     return f"data:image/png;base64,{base64.b64encode(p.read_bytes()).decode('ascii')}"
 
 
-def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
-    """도면 PNG + 기존 spot 마커. 클릭으로 좌표 픽업할 수 있게 빈 영역 trace 1개."""
+def _make_floor_fig(floor: str, spots: list[Spot],
+                    show_grid: bool = True, height: int = 600) -> go.Figure | None:
+    """도면 PNG + 기존 spot 마커.
+    show_grid=True 면 좌표 픽업용 격자(파란 점) 표시(신규 위치 추가 모달용).
+    show_grid=False 면 읽기 전용 도면(위치 마스터 인라인 미리보기용)."""
     uri = _floor_image_uri(floor)
     if uri is None:
         return None
@@ -63,30 +66,31 @@ def _make_floor_fig(floor: str, spots: list[Spot]) -> go.Figure | None:
 
     # 좌표 픽업용 격자 (50x50 = 2500개) — 살짝 보이는 점 + 호버 안내
     # 사용자가 클릭 가능 위치를 시각적으로 인지하도록 visible
-    grid_x, grid_y = [], []
-    for i in range(50):
-        for j in range(50):
-            grid_x.append((i + 0.5) / 50 * FIG_W)
-            grid_y.append((j + 0.5) / 50 * FIG_H)
-    fig.add_trace(go.Scatter(
-        x=grid_x, y=grid_y,
-        mode="markers",
-        marker=dict(
-            size=10,
-            color="rgba(59,130,246,0.22)",
-            line=dict(width=0),
-        ),
-        hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
-        showlegend=False,
-        name="grid",
-    ))
+    if show_grid:
+        grid_x, grid_y = [], []
+        for i in range(50):
+            for j in range(50):
+                grid_x.append((i + 0.5) / 50 * FIG_W)
+                grid_y.append((j + 0.5) / 50 * FIG_H)
+        fig.add_trace(go.Scatter(
+            x=grid_x, y=grid_y,
+            mode="markers",
+            marker=dict(
+                size=10,
+                color="rgba(59,130,246,0.22)",
+                line=dict(width=0),
+            ),
+            hovertemplate="여기 클릭 → 좌표 픽업<extra></extra>",
+            showlegend=False,
+            name="grid",
+        ))
 
     fig.update_xaxes(visible=False, range=[0, FIG_W], constrain="domain")
     fig.update_yaxes(visible=False, range=[0, FIG_H], scaleanchor="x", scaleratio=1)
     fig.update_layout(
         margin=dict(l=0, r=0, t=0, b=0),
         plot_bgcolor="#F8FAFC",
-        height=600,
+        height=height,
         dragmode="pan",
         showlegend=False,
         clickmode="event+select",
@@ -138,13 +142,16 @@ def _spot_edit_dialog(spot_id: str) -> None:
         st.warning(f"{s.floor} 도면 이미지가 없습니다.")
     else:
         from lib.floor_widget import (
-            control_toggle, floor_legend_html, lock_overlay_css, plotly_config,
+            control_toggle, legend_html, lock_overlay_css, plotly_config,
         )
         cc, lc = st.columns([1.2, 5])
         with cc:
             locked = control_toggle(f"edit_map_{spot_id}", default_locked=True)
         with lc:
-            st.markdown(floor_legend_html(), unsafe_allow_html=True)
+            st.markdown(legend_html([
+                ("#2563EB", "현재 spot"),
+                ("#FDE68A", "다른 spot"),
+            ]), unsafe_allow_html=True)
 
         # CSS는 plotly_chart 전에 주입 — timing 안정성
         if locked:
@@ -251,7 +258,7 @@ def _spot_edit_dialog(spot_id: str) -> None:
                 msg += f" 매핑 장비 {n_synced}건의 위치 정보도 동기화."
             st.session_state["admin_spot_save_msg"] = msg
             # 모달 정리
-            for k in (init_x_key, init_y_key,
+            for k in (init_x_key, init_y_key, f"edit_promote_{spot_id}",
                       f"edit_room_{spot_id}", f"edit_notes_{spot_id}"):
                 st.session_state.pop(k, None)
             st.session_state.pop("admin_spot_edit_id", None)
@@ -259,7 +266,7 @@ def _spot_edit_dialog(spot_id: str) -> None:
     with bc2:
         if st.button("취소", use_container_width=True,
                      key=f"edit_cancel_{spot_id}"):
-            for k in (init_x_key, init_y_key,
+            for k in (init_x_key, init_y_key, f"edit_promote_{spot_id}",
                       f"edit_room_{spot_id}", f"edit_notes_{spot_id}"):
                 st.session_state.pop(k, None)
             st.session_state.pop("admin_spot_edit_id", None)
@@ -371,7 +378,10 @@ def _spot_define_dialog() -> None:
     with ctrl_col:
         locked = control_toggle(f"admin_dlg_{floor}", default_locked=True)
     with leg_col:
-        st.markdown(floor_legend_html(), unsafe_allow_html=True)
+        st.markdown(legend_html([
+            ("#F59E0B", "기존 위치"),
+            ("#3B82F6", "클릭 가능 영역(좌표 픽업)"),
+        ]), unsafe_allow_html=True)
 
     if locked:
         from lib.floor_widget import lock_overlay_css
@@ -469,18 +479,95 @@ def _spot_define_dialog() -> None:
                 st.rerun()
 
 
+def _select_admin_floor(target: str) -> None:
+    """미니맵 [이 층 보기] 클릭 콜백 — 층 선택 selectbox를 target 층으로 전환."""
+    st.session_state["admin_spot_floor"] = target
+
+
+def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
+    """위치 마스터 층 선택 아래 도면 미리보기 (읽기 전용).
+    - 특정 층: 그 층 도면 + spot 마커
+    - 전체: 전 층 미니맵 그리드 + [이 층 보기] 드릴인 버튼
+    """
+    if floor != "전체":
+        fig = _make_floor_fig(floor, spots, show_grid=False, height=460)
+        if fig is None:
+            st.caption(f"({floor} 도면 이미지가 없습니다)")
+            return
+        st.markdown(
+            f"<div style='margin-top:0.4rem; color:#475569; font-size:0.85rem;'>"
+            f"🗺️ <b>{floor}</b> 도면 · 등록된 위치 {len(spots)}개</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(legend_html([
+            ("#F59E0B", "등록된 위치(spot)"),
+        ]), unsafe_allow_html=True)
+        st.plotly_chart(
+            fig, use_container_width=True,
+            config={"displayModeBar": False, "staticPlot": True},
+            key=f"admin_spot_fig_{floor}",
+        )
+        return
+
+    # 전체 — 전 층 미니맵 그리드 (4열) + 드릴인 버튼
+    st.markdown(
+        "<div style='margin-top:0.4rem; color:#475569; font-size:0.85rem;'>"
+        "🗺️ 전 층 미니맵 — <b>[이 층 보기]</b>로 해당 층 상세로 이동</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(legend_html([
+        ("#F59E0B", "등록된 위치(spot)"),
+    ]), unsafe_allow_html=True)
+    all_spots = spots  # 이미 전체 로드됨
+    by_floor: dict[str, list[Spot]] = {f: [] for f in ADMIN_FLOORS}
+    for s in all_spots:
+        by_floor.setdefault(s.floor, []).append(s)
+
+    n_cols = 4
+    for row_start in range(0, len(ADMIN_FLOORS), n_cols):
+        row_floors = ADMIN_FLOORS[row_start:row_start + n_cols]
+        cols = st.columns(n_cols)
+        for col, fl in zip(cols, row_floors):
+            with col:
+                fspots = by_floor.get(fl, [])
+                mini = _make_floor_fig(fl, fspots, show_grid=False, height=150)
+                st.markdown(
+                    f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
+                    f"margin-bottom:0.1rem;'>{fl} "
+                    f"<span style='color:#94A3B8; font-weight:500;'>({len(fspots)})</span></div>",
+                    unsafe_allow_html=True,
+                )
+                if mini is not None:
+                    st.plotly_chart(
+                        mini, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"admin_mini_{fl}",
+                    )
+                else:
+                    st.caption("(도면 없음)")
+                st.button(
+                    "이 층 보기", key=f"admin_drill_{fl}",
+                    use_container_width=True,
+                    on_click=_select_admin_floor, args=(fl,),
+                )
+
+
 def _spot_master_tab() -> None:
     # 상단 헤더 + [+ 신규 위치 추가] 버튼
     head_l, head_r = st.columns([3, 1])
     with head_l:
         st.markdown(
             "<div style='color:#64748B; font-size:0.92rem;'>"
-            "층별 위치(spot)를 정의·관리합니다. 신규 정의는 우측 버튼에서 모달로 진행."
+            "등록된 위치(spot)를 <b>관리·검증</b>합니다 — 사용 여부 확인, 신규(임시) 위치 "
+            "정식 전환, 속성·좌표 조정.<br>"
+            "<span style='color:#94A3B8; font-size:0.85rem;'>"
+            "일상 신규 위치는 <b>시설 관리(장비 등록)</b>·<b>안전점검(신규 위치 점검)</b>에서 "
+            "생성됩니다. 아래 버튼은 초기 세팅·예외용.</span>"
             "</div>",
             unsafe_allow_html=True,
         )
     with head_r:
-        if st.button("+ 신규 위치 추가", type="primary",
+        if st.button("+ 신규 위치 등록", type="secondary",
                      use_container_width=True, key="admin_spot_open_dlg"):
             for k in ("admin_spot_room", "admin_spot_notes",
                       "admin_spot_x_input", "admin_spot_y_input"):
@@ -498,6 +585,9 @@ def _spot_master_tab() -> None:
     )
     spots = data.load_spots() if floor == "전체" else data.load_spots(floor)
 
+    # --- 도면 미리보기 (읽기 전용, v1.7) ---
+    _spot_master_floor_preview(floor, spots)
+
     # --- spot 목록 + 편집/삭제 ---
     list_title = (
         f"전체 spot 목록 ({len(spots)}건)" if floor == "전체"
@@ -512,12 +602,15 @@ def _spot_master_tab() -> None:
         st.info("아직 정의된 spot이 없습니다. 도면 위 빈 곳을 클릭하고 폼을 채워 추가하세요.")
         return
 
-    used = {e.spot_id for e in data.load_equipment() if e.spot_id}
-    # 컬럼 7개: ID / 방이름 / 비고 / 좌표 / 사용 / [속성변경] / [삭제]
-    cols_ratio = [1.3, 1.9, 1.4, 0.9, 0.7, 0.9, 0.7]
+    # spot_id → 그 자리에 배치된 장비 ID (없으면 미포함). 첫 컬럼 장비 ID/- 표시용
+    eq_by_spot = {e.spot_id: e.equipment_id
+                  for e in data.load_equipment() if e.spot_id}
+    used = set(eq_by_spot)
+    # 컬럼 9개: 장비 ID / spot ID / 방이름 / 비고 / 좌표 / 사용 / [승인] / [속성변경] / [삭제]
+    cols_ratio = [0.85, 1.15, 1.5, 1.1, 0.8, 0.65, 0.85, 0.9, 0.65]
     header = st.columns(cols_ratio)
     for col, txt in zip(header,
-                        ["spot ID", "방이름", "비고", "좌표(%)", "사용", "", ""]):
+                        ["장비 ID", "spot ID", "방이름", "비고", "좌표(%)", "사용", "승인", "", ""]):
         col.markdown(
             f"<div style='color:#64748B; font-size:0.78rem; font-weight:600;'>{txt}</div>",
             unsafe_allow_html=True,
@@ -528,45 +621,49 @@ def _spot_master_tab() -> None:
     for s in spots:
         row = st.columns(cols_ratio, vertical_alignment="center")
         in_use = s.spot_id in used
-        temp_badge = (
-            " <span style='background:#DBEAFE; color:#1E3A8A; padding:0.05rem 0.4rem; "
-            "border-radius:6px; font-size:0.68rem; font-weight:700;'>신규</span>"
-            if s.is_temporary else ""
+        # 이 spot에 배치된 장비 ID (없으면 "-"). 층은 spot ID, 신규는 [승인] 버튼으로 식별
+        eq_id = eq_by_spot.get(s.spot_id)
+        eq_disp = (
+            f"<span style='font-weight:600; color:#0F172A;'>{eq_id}</span>"
+            if eq_id else "<span style='color:#94A3B8;'>-</span>"
         )
-        floor_badge = (
-            f" <span style='background:#F1F5F9; color:#475569; "
-            f"padding:0.05rem 0.4rem; border-radius:6px; "
-            f"font-size:0.68rem; font-weight:600;'>{s.floor}</span>"
-            if floor == "전체" else ""
-        )
-        row[0].markdown(
-            f"<span style='font-weight:600; color:#0F172A;'>{s.spot_id}</span>"
-            f"{floor_badge}{temp_badge}",
+        row[0].markdown(eq_disp, unsafe_allow_html=True)
+        row[1].markdown(
+            f"<span style='color:#64748B; font-size:0.82rem;'>{s.spot_id}</span>",
             unsafe_allow_html=True,
         )
-        row[1].markdown(s.room_name)
-        row[2].markdown(
+        row[2].markdown(s.room_name)
+        row[3].markdown(
             f"<span style='color:#475569;'>{s.notes or '-'}</span>",
             unsafe_allow_html=True,
         )
-        row[3].markdown(
+        row[4].markdown(
             f"<span style='color:#334155; font-size:0.85rem;'>"
             f"{s.x_pct:.1f} / {s.y_pct:.1f}</span>",
             unsafe_allow_html=True,
         )
-        row[4].markdown(
+        row[5].markdown(
             "<span style='background:#FEF3C7; color:#92400E; padding:0.1rem 0.4rem; "
             "border-radius:6px; font-size:0.74rem;'>사용 중</span>"
             if in_use else
             "<span style='color:#94A3B8; font-size:0.78rem;'>미사용</span>",
             unsafe_allow_html=True,
         )
-        with row[5]:
+        with row[6]:
+            # 검증 대기(임시) spot에만 [승인] 노출 → 기존 '속성 변경' 모달을
+            # '정식 전환' 기본 체크 상태로 열어 방이름·좌표 수정 후 저장 시 전환
+            if s.is_temporary:
+                if st.button("승인", key=f"admin_spot_approve_{s.spot_id}",
+                             type="primary", use_container_width=True):
+                    st.session_state[f"edit_promote_{s.spot_id}"] = True
+                    st.session_state["admin_spot_edit_id"] = s.spot_id
+                    st.rerun()
+        with row[7]:
             if st.button("속성 변경", key=f"admin_spot_edit_{s.spot_id}",
                          use_container_width=True):
                 st.session_state["admin_spot_edit_id"] = s.spot_id
                 st.rerun()
-        with row[6]:
+        with row[8]:
             if st.button("삭제", key=f"admin_spot_del_{s.spot_id}",
                          use_container_width=True, disabled=in_use):
                 data.delete_spot(s.spot_id)
@@ -577,7 +674,7 @@ def _spot_master_tab() -> None:
     if msg:
         st.success(msg)
 
-    # 편집 모달 트리거
+    # 편집/승인 공통 모달 트리거 (승인도 이 모달을 정식 전환 체크 상태로 사용)
     edit_id = st.session_state.get("admin_spot_edit_id")
     if edit_id:
         _spot_edit_dialog(edit_id)
@@ -689,6 +786,138 @@ def _user_admin_tab() -> None:
                             st.error(f"실패: {e}")
 
 
+_MIGRATION_SQL_INSP_TYPES = (
+    "create table if not exists public.inspection_types (\n"
+    "  name text primary key, is_active boolean not null default true,\n"
+    "  is_builtin boolean not null default false,\n"
+    "  sort_order int not null default 100,\n"
+    "  created_at timestamptz not null default now());\n"
+    "insert into public.inspection_types (name, is_builtin, sort_order) values\n"
+    "  ('일일 점검',true,1),('주간 점검',true,2),('월간 점검',true,3),\n"
+    "  ('분기 점검',true,4),('연간 점검',true,5) on conflict (name) do nothing;\n"
+    "alter table public.inspection_types enable row level security;"
+)
+
+
+def _inspection_type_tab() -> None:
+    """점검 유형(주기) 카탈로그 관리 — 추가/비활성/삭제."""
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.92rem;'>"
+        "점검 유형(주기) 카탈로그를 관리합니다 — <b>추가 / 비활성 / 삭제</b>. "
+        "비활성 유형은 새 선택 목록에서 숨겨지지만, 이미 지정된 장비·회차엔 그대로 남습니다."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not data.inspection_types_table_exists():
+        st.warning(
+            "점검 유형 테이블(`inspection_types`)이 없습니다. 아래 SQL을 "
+            "Supabase SQL 에디터에서 1회 실행한 뒤 새로고침하세요."
+        )
+        st.code(_MIGRATION_SQL_INSP_TYPES, language="sql")
+        return
+
+    # 새 유형 추가
+    ac1, ac2 = st.columns([3, 1])
+    with ac1:
+        new_name = st.text_input(
+            "새 유형", key="new_insp_type", label_visibility="collapsed",
+            placeholder="새 점검 유형 (예: 반기 점검)",
+        )
+    with ac2:
+        if st.button("추가", use_container_width=True, type="primary",
+                     key="add_insp_type_btn"):
+            ok, msg = data.add_inspection_type(new_name)
+            if ok:
+                st.session_state.pop("new_insp_type", None)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    st.markdown("<hr style='margin:0.5rem 0 0.3rem; border:none; "
+                "border-top:1px solid #E2E8F0;'>", unsafe_allow_html=True)
+
+    # 목록 헤더
+    ratios = [2.0, 0.8, 0.7, 0.95, 0.95, 0.85]
+    hcols = st.columns(ratios, vertical_alignment="center")
+    for c, t in zip(hcols, ["유형", "사용중", "기본", "활성", "이름 변경", "삭제"]):
+        c.markdown(
+            f"<div style='color:#64748B; font-weight:600; font-size:0.78rem; "
+            f"text-align:center;'>{t}</div>", unsafe_allow_html=True,
+        )
+    st.markdown("<hr style='margin:0.15rem 0 0.1rem; border:none; "
+                "border-top:1px solid #E2E8F0;'>", unsafe_allow_html=True)
+
+    for row in data.load_inspection_type_rows():
+        name = row["name"]
+        usage = data._inspection_type_usage(name)
+        builtin = bool(row.get("is_builtin"))
+        is_active = bool(row.get("is_active", True))
+        cols = st.columns(ratios, vertical_alignment="center")
+        cols[0].markdown(
+            f"<div style='text-align:center; font-weight:600; color:#0F172A;'>{name}</div>",
+            unsafe_allow_html=True,
+        )
+        cols[1].markdown(
+            f"<div style='text-align:center; color:#475569;'>{usage}건</div>",
+            unsafe_allow_html=True,
+        )
+        cols[2].markdown(
+            "<div style='text-align:center;'>"
+            + ("<span style='color:#2563EB; font-size:0.78rem; font-weight:600;'>기본</span>"
+               if builtin else "<span style='color:#CBD5E1;'>—</span>")
+            + "</div>", unsafe_allow_html=True,
+        )
+        # 활성/비활성 — 버튼 토글 (value= 경고 회피)
+        with cols[3]:
+            if st.button("🟢 활성" if is_active else "⚪ 비활성",
+                         key=f"insp_active_{name}", use_container_width=True):
+                data.set_inspection_type_active(name, not is_active)
+                st.rerun()
+        # 이름 변경 — 전 유형 가능 (기본 포함, 참조 연쇄 갱신)
+        with cols[4]:
+            if st.button("이름 변경", key=f"insp_rename_btn_{name}",
+                         use_container_width=True):
+                st.session_state[f"insp_rename_open_{name}"] = True
+        # 삭제 — 기본·사용중은 불가
+        with cols[5]:
+            deletable = (not builtin) and usage == 0
+            if st.button("삭제", key=f"insp_del_{name}", use_container_width=True,
+                         disabled=not deletable,
+                         help=None if deletable else "기본·사용중 유형은 삭제 불가(비활성만)"):
+                ok, msg = data.delete_inspection_type(name)
+                if ok:
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        # 인라인 이름 변경 폼
+        if st.session_state.get(f"insp_rename_open_{name}"):
+            _rk = f"insp_rename_input_{name}"
+            if _rk not in st.session_state:
+                st.session_state[_rk] = name  # 현재 이름 프리필 (value= 경고 회피)
+            rc1, rc2, rc3 = st.columns([2.0, 0.7, 0.7], vertical_alignment="center")
+            with rc1:
+                st.text_input("새 이름", key=_rk, label_visibility="collapsed",
+                              placeholder="새 이름 입력")
+            with rc2:
+                if st.button("저장", key=f"insp_rename_save_{name}",
+                             use_container_width=True, type="primary"):
+                    ok, msg = data.rename_inspection_type(name, st.session_state[_rk])
+                    if ok:
+                        st.session_state.pop(f"insp_rename_open_{name}", None)
+                        st.session_state.pop(_rk, None)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with rc3:
+                if st.button("취소", key=f"insp_rename_cancel_{name}",
+                             use_container_width=True):
+                    st.session_state.pop(f"insp_rename_open_{name}", None)
+                    st.session_state.pop(_rk, None)
+                    st.rerun()
+
+
 def render() -> None:
     if not auth.is_admin():
         st.error("관리자 권한이 필요합니다. 사이드바의 일반 메뉴를 이용해 주세요.")
@@ -701,7 +930,10 @@ def render() -> None:
 
     # 사이드바 하위 메뉴에서 어떤 탭을 활성화할지 결정 (admin_tab 세션 키)
     # st.tabs는 외부 활성화가 어려우므로 st.radio 패턴으로 구현
-    tabs = ["위치 마스터", "사용자 관리"]
+    tabs = ["위치 마스터 관리", "점검 유형 관리", "사용자 관리"]
+    # 라벨 변경(v1.8) 이전 세션에 캐시된 옛 라벨이 남아 있으면 라디오 오류 → 정리
+    if st.session_state.get("admin_tab") not in tabs:
+        st.session_state.pop("admin_tab", None)
     section = st.radio(
         "관리자 섹션",
         tabs,
@@ -710,7 +942,9 @@ def render() -> None:
         label_visibility="collapsed",
     )
     st.markdown("<div style='height:0.5rem;'></div>", unsafe_allow_html=True)
-    if section == "위치 마스터":
+    if section == "위치 마스터 관리":
         _spot_master_tab()
+    elif section == "점검 유형 관리":
+        _inspection_type_tab()
     else:
         _user_admin_tab()

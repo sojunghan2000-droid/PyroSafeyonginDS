@@ -28,6 +28,8 @@ TaskStatus = Literal["Scheduled", "In Progress", "Overdue", "Completed"]
 InspectionType = Literal["임시소방시설", "피난로 등", "화기취급감독"]
 ResolutionStatus = Literal["완료", "불가"]
 
+MAL_ROUND_TYPE = "오동작 접수"  # 직접 등록 오동작에 발행하는 회차/Task 유형 (정기 점검과 구분)
+
 ACTION_PHOTO_BUCKET = "action-photos"
 
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
@@ -53,6 +55,8 @@ class Equipment:
     inspection_types: list[str] = None  # type: ignore[assignment]
     # v1.1: 도면 위 위치 spot 객체 참조 (없으면 None — 기존 데이터)
     spot_id: str | None = None
+    # v1.9(260907): 소프트 삭제 — False면 목록에서 숨김(이력은 보존)
+    active: bool = True
 
     def __post_init__(self) -> None:
         if self.inspection_types is None:
@@ -73,36 +77,144 @@ class Spot:
     is_temporary: bool = False
 
 
-# 점검 회차 등록 시 사용하는 운영 주기 카탈로그 (v1.5+)
+# 점검 회차 등록 시 사용하는 운영 주기 카탈로그 (v1.5+ / v1.6: 일일 점검 추가)
 # 시설 종류와는 직교 — 한 회차에 여러 시설이 포함될 수 있음.
 TASK_INSPECTION_TYPES = [
-    "주간 점검",
+    "일일 점검",   # 화기작업구간 점검용 — 작업 시작 전/중 수시
     "월간 점검",
-    "분기 점검",
-    "연간 점검",
+    "특별 점검",   # v1.9(260907): 분기 점검 + 연간 점검 통합
 ]
 
 # 카테고리 → 기본 적용 점검 주기 (시드/신규 등록 시 자동 채움. 관리자가 수정 가능)
 INSPECTION_TYPE_CATEGORY_DEFAULTS: dict[str, list[str]] = {
-    "소화기": ["월간 점검", "분기 점검"],
-    "확산소화기": ["월간 점검", "분기 점검"],
+    "소화기": ["월간 점검", "특별 점검"],
+    "확산소화기": ["월간 점검", "특별 점검"],
     "간이소화장치": ["월간 점검"],
     "비상경보장치": ["월간 점검"],
     "가스누설경보기": ["월간 점검"],
     "간이피난유도선": ["월간 점검"],
     "방화포": ["월간 점검"],
-    "감지기": ["분기 점검"],
-    "발신기": ["분기 점검"],
-    "수신기": ["분기 점검"],
+    "감지기": ["특별 점검"],
+    "발신기": ["특별 점검"],
+    "수신기": ["특별 점검"],
     "유도등": ["월간 점검"],
-    "스프링클러": ["분기 점검"],
-    "소화전": ["분기 점검"],
+    "스프링클러": ["특별 점검"],
+    "소화전": ["특별 점검"],
     "기타": [],
 }
 
 
 def default_inspection_types_for(category: str) -> list[str]:
-    return list(INSPECTION_TYPE_CATEGORY_DEFAULTS.get(category, []))
+    # v1.8: 현재 카탈로그에 존재하는 이름만 반환 — 기본 유형 rename 시 옛 이름(orphan) 제거
+    defaults = INSPECTION_TYPE_CATEGORY_DEFAULTS.get(category, [])
+    catalog = set(load_inspection_types())
+    return [t for t in defaults if t in catalog]
+
+
+# ---------- v1.6: 신규 점검 종류 카탈로그 (별지5 양식 inspection_types) ----------
+# 화기작업·가설컨테이너 점검은 기존 3종(임시소방시설/피난로 등/화기취급감독)과 별개.
+# 각 점검 종류에 매핑된 "불량 사유" 카탈로그를 가져 multiselect 입력에 사용.
+
+INSPECTION_KIND_FIRE_WORK = "화기작업구간 점검"
+INSPECTION_KIND_CONTAINER = "가설컨테이너 사무실 점검"
+
+# 화기작업구간 점검 — 불량 사유 6종
+DEFECT_CODES_FIRE_WORK = [
+    "방화포 미비치 또는 파손",
+    "소화기 부족/충전 부족/고장",
+    "화재감시자 부재 또는 불안전한 행동",
+    "가연물 정리정돈 미흡",
+    "주변 간섭사항 존재",
+    "기타",
+]
+
+# 가설컨테이너 사무실 점검 — 불량 사유 7종
+DEFECT_CODES_CONTAINER = [
+    "소화기 비치·점검 불량",
+    "환기팬 설치/작동 불량",
+    "외부 차단기·시건 상태 불량",
+    "감지기 작동 불량",
+    "접지 불량",
+    "철제쓰레기통 미사용·인화성물질 보관 불량",
+    "기타",
+]
+
+# 점검 종류 → 불량 사유 카탈로그 매핑 (v1.6)
+DEFECT_CODE_CATALOG: dict[str, list[str]] = {
+    INSPECTION_KIND_FIRE_WORK: DEFECT_CODES_FIRE_WORK,
+    INSPECTION_KIND_CONTAINER: DEFECT_CODES_CONTAINER,
+}
+
+
+def defect_codes_for(inspection_kind: str) -> list[str]:
+    """주어진 점검 종류의 불량 사유 카탈로그. 매핑 없으면 빈 리스트."""
+    return list(DEFECT_CODE_CATALOG.get(inspection_kind, []))
+
+
+# ---------- v1.7: 세부 점검 checklist 카탈로그 ----------
+# 각 점검 종류의 상세 점검 항목을 카테고리별로 정의. 점검자는 각 항목에 대해
+# OK / NG / NA(해당없음)를 기록. NG가 하나라도 있으면 자동으로 결과 "불량" 힌트.
+
+# 화기작업구간 점검 — 4 카테고리 × 3 세부 = 12개
+CHECKLIST_FIRE_WORK: dict[str, list[str]] = {
+    "방화포·소화기 비치": [
+        "방화포 즉시 사용 가능 상태 비치",
+        "소화기 인근 충분 비치",
+        "방화포·소화기 상태 점검 통과 (손상·충전 압력)",
+    ],
+    "화재감시자 업무 숙련도": [
+        "전담 감시자 배치",
+        "업무 인지·숙련",
+        "감시 위치 적절 (구간 조망 가능)",
+    ],
+    "가연물 정리정돈": [
+        "반경 내 가연물 제거 또는 방화포 보양",
+        "우발 접촉 위험 없이 정돈",
+        "작업구간·주변 청소 상태",
+    ],
+    "주변 간섭사항": [
+        "인접 지역 다른 공사 없음",
+        "통행 차단·표시",
+        "환기 충분 (연기·가스 정체 없음)",
+    ],
+}
+
+# 가설컨테이너 사무실 점검 — 7개 항목 (카테고리 없이 단일 리스트)
+CHECKLIST_CONTAINER: list[str] = [
+    "소화기 비치·점검 상태 (내부 확산 + 외부 3.3kg)",
+    "환기팬 설치기준 준수 (철제 팬·전원버튼)",
+    "외부 차단기 설치 + 차단기함 시건",
+    "감지기 작동 상태",
+    "접지 상태",
+    "철제쓰레기통 사용 + 인화성물질 보관",
+    "일일점검체크리스트 작성",
+]
+
+
+def checklist_for(inspection_kind: str) -> dict[str, list[str]] | list[str] | None:
+    """주어진 점검 종류의 세부 checklist 카탈로그.
+    화기작업 → dict (카테고리별 항목 리스트)
+    가설컨테이너 → list (단일 리스트)
+    매핑 없음 → None
+    """
+    if inspection_kind == INSPECTION_KIND_FIRE_WORK:
+        return CHECKLIST_FIRE_WORK
+    if inspection_kind == INSPECTION_KIND_CONTAINER:
+        return CHECKLIST_CONTAINER
+    return None
+
+
+def checklist_flat_keys(inspection_kind: str) -> list[str]:
+    """checklist_items dict의 키 목록을 평탄화해 반환.
+    화기작업: '카테고리|항목' 형식.
+    가설컨테이너: 항목 그대로.
+    """
+    catalog = checklist_for(inspection_kind)
+    if catalog is None:
+        return []
+    if isinstance(catalog, dict):
+        return [f"{cat}|{item}" for cat, items in catalog.items() for item in items]
+    return list(catalog)
 
 
 @dataclass
@@ -133,12 +245,18 @@ class InspectionRound:
     due_date: date
     status: TaskStatus
     note: str = ""
+    cancelled: bool = False
+    cancel_reason: str = ""
+    cancelled_at: date | None = None
+    cancelled_by: str = ""
+    archived: bool = False
 
 
 @dataclass
 class Deficiency:
     """별지5 안전점검 결과 지적내역서 row.
-    v1.5: 별지6 통보서의 조치 단계 필드를 흡수 (action_*, submitter)."""
+    v1.5: 별지6 통보서의 조치 단계 필드를 흡수 (action_*, submitter).
+    v1.6: 화기작업·가설컨테이너 점검을 위한 불량 사유 카탈로그 (defect_codes/defect_other)."""
     deficiency_id: str
     inspection_date: date
     inspector: str
@@ -156,6 +274,25 @@ class Deficiency:
     action_note: str = ""
     action_photo_path: str | None = None
     submitter: str | None = None
+    # v1.6: 불량 사유 카탈로그 (multiselect) + 기타 상세
+    defect_codes: list[str] = None  # type: ignore[assignment]
+    defect_other: str = ""
+    # v1.7: 세부 checklist 항목별 상태 — {"카테고리|항목" or "항목": "OK"|"NG"|"NA"}
+    checklist_items: dict[str, str] = None  # type: ignore[assignment]
+    # v1.9(260907): 조치 전(발견 시) 사진 — action_photo_path(조치 후)와 분리
+    photo_path: str | None = None
+    # v1.9(260907): 점검 결과(양호/불량) 무관 점검사진
+    inspection_photo_path: str | None = None
+    # v1.9(260907): 각 사진 종류별 2번째 사진(선택, 최대 2장)
+    photo_path2: str | None = None
+    action_photo_path2: str | None = None
+    inspection_photo_path2: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.defect_codes is None:
+            self.defect_codes = []
+        if self.checklist_items is None:
+            self.checklist_items = {}
 
 
 @dataclass
@@ -193,6 +330,9 @@ class Malfunction:
     action_done: bool = False    # v1.5+: 조치 완료 여부
     action_at: date | None = None
     action_note: str = ""
+    floor: str = ""          # v1.9: 오동작 발생 위치(선택)
+    zone: str = ""
+    spot_id: str | None = None
 
 
 # ---------- Supabase 클라이언트 ----------
@@ -267,6 +407,7 @@ def _row_to_equipment(r: dict) -> Equipment:
         pixel_x=r.get("pixel_x") or 0.0, pixel_y=r.get("pixel_y") or 0.0,
         inspection_types=list(r.get("inspection_types") or []),
         spot_id=r.get("spot_id"),
+        active=bool(r.get("active", True)),
     )
 
 
@@ -300,6 +441,11 @@ def _row_to_round(r: dict) -> InspectionRound:
         assignee=r.get("assignee") or "",
         due_date=_d(r["due_date"]),
         status=r["status"], note=r.get("note") or "",
+        cancelled=bool(r.get("cancelled", False)),
+        cancel_reason=r.get("cancel_reason") or "",
+        cancelled_at=_d(r.get("cancelled_at")),
+        cancelled_by=r.get("cancelled_by") or "",
+        archived=bool(r.get("archived", False)),
     )
 
 
@@ -316,6 +462,14 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         action_note=r.get("action_note") or "",
         action_photo_path=r.get("action_photo_path"),
         submitter=r.get("submitter"),
+        defect_codes=list(r.get("defect_codes") or []),  # v1.6
+        defect_other=r.get("defect_other") or "",        # v1.6
+        checklist_items=dict(r.get("checklist_items") or {}),  # v1.7
+        photo_path=r.get("photo_path"),
+        inspection_photo_path=r.get("inspection_photo_path"),
+        photo_path2=r.get("photo_path2"),
+        action_photo_path2=r.get("action_photo_path2"),
+        inspection_photo_path2=r.get("inspection_photo_path2"),
     )
 
 
@@ -343,6 +497,9 @@ def _row_to_malfunction(r: dict) -> Malfunction:
         action_done=bool(r.get("action_done") or False),
         action_at=_d(r.get("action_at")),
         action_note=r.get("action_note") or "",
+        floor=r.get("floor") or "",
+        zone=r.get("zone") or "",
+        spot_id=r.get("spot_id"),
     )
 
 
@@ -388,8 +545,30 @@ def _round_rows() -> list[dict]:
             .order("due_date", desc=True).execute().data)
 
 
-def load_equipment() -> list[Equipment]:
-    return [_row_to_equipment(r) for r in _equipment_rows()]
+@st.cache_data(ttl=_CACHE_TTL)
+def _inspection_type_rows() -> list[dict]:
+    """점검 유형 카탈로그 조회. 테이블 미존재/오류 시 [] → 하드코딩 폴백 신호."""
+    try:
+        return (_db().table("inspection_types").select("*")
+                .order("sort_order").order("name").execute().data)
+    except Exception:
+        return []
+
+
+def inspection_types_table_exists() -> bool:
+    """관리 UI에서 마이그레이션 안내 분기용."""
+    try:
+        _db().table("inspection_types").select("name").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def load_equipment(include_retired: bool = False) -> list[Equipment]:
+    eqs = [_row_to_equipment(r) for r in _equipment_rows()]
+    if not include_retired:
+        eqs = [e for e in eqs if e.active]
+    return eqs
 
 
 def load_tasks() -> list[InspectionTask]:
@@ -427,6 +606,27 @@ def load_rounds() -> list[InspectionRound]:
     return [_row_to_round(r) for r in _round_rows()]
 
 
+def load_inspection_types(active_only: bool = False) -> list[str]:
+    """점검 유형 이름 목록. 테이블 없으면 하드코딩 TASK_INSPECTION_TYPES 폴백."""
+    rows = _inspection_type_rows()
+    if not rows:
+        return list(TASK_INSPECTION_TYPES)
+    if active_only:
+        rows = [r for r in rows if r.get("is_active", True)]
+    return [r["name"] for r in rows]
+
+
+def load_inspection_type_rows() -> list[dict]:
+    """관리 UI용 유형 행 목록. 테이블 없으면 하드코딩 5종을 기본(builtin)으로 합성."""
+    rows = _inspection_type_rows()
+    if rows:
+        return rows
+    return [
+        {"name": n, "is_active": True, "is_builtin": True, "sort_order": i + 1}
+        for i, n in enumerate(TASK_INSPECTION_TYPES)
+    ]
+
+
 def get_round(round_id: str) -> InspectionRound | None:
     for r in _round_rows():
         if r["round_id"] == round_id:
@@ -456,7 +656,11 @@ def compute_round_status(round_id: str) -> str:
     - Overdue Task 1+ → Overdue
     - In Progress Task 1+ → In Progress
     - 그 외 → Scheduled
-    제외된 Task는 분모에서 빠짐. Task가 0건이면 Scheduled 반환."""
+    제외된 Task는 분모에서 빠짐. Task가 0건이면 Scheduled 반환.
+    취소된 회차는 status를 재계산하지 않는다(현재 status 유지)."""
+    _r = get_round(round_id)
+    if _r and _r.cancelled:
+        return _r.status
     tasks = tasks_of_round(round_id)
     if not tasks:
         return "Scheduled"
@@ -482,6 +686,37 @@ def add_equipment(e: Equipment) -> None:
         "inspection_types": e.inspection_types or [],
         "spot_id": e.spot_id,
     }).execute()
+    _equipment_rows.clear()
+
+
+def equipment_active_supported() -> bool:
+    """equipment.active 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("equipment").select("active").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def retire_equipment(equipment_id: str) -> None:
+    """장비를 비활성화(소프트 삭제)한다. 이력은 보존.
+    active 컬럼 미마이그레이션 시 아무 것도 하지 않는다."""
+    if not equipment_active_supported():
+        return
+    _db().table("equipment").update({"active": False}).eq(
+        "equipment_id", equipment_id
+    ).execute()
+    _equipment_rows.clear()
+
+
+def restore_equipment(equipment_id: str) -> None:
+    """비활성화된 장비를 복구한다.
+    active 컬럼 미마이그레이션 시 아무 것도 하지 않는다."""
+    if not equipment_active_supported():
+        return
+    _db().table("equipment").update({"active": True}).eq(
+        "equipment_id", equipment_id
+    ).execute()
     _equipment_rows.clear()
 
 
@@ -592,6 +827,78 @@ def set_equipment_inspection_types(equipment_id: str, types: list[str]) -> None:
     _equipment_rows.clear()
 
 
+# ---------- 점검 유형 카탈로그 관리 (v1.8) ----------
+
+def _inspection_type_usage(name: str) -> int:
+    """유형 사용량 = 장비 inspection_types 포함 수 + 회차 task_type 일치 수."""
+    eq_cnt = sum(1 for e in load_equipment() if name in (e.inspection_types or []))
+    rnd_cnt = sum(1 for r in load_rounds() if r.task_type == name)
+    return eq_cnt + rnd_cnt
+
+
+def add_inspection_type(name: str) -> tuple[bool, str]:
+    """새 점검 유형 추가. (성공여부, 메시지)."""
+    name = (name or "").strip()
+    if not name:
+        return False, "이름을 입력하세요."
+    rows = _inspection_type_rows()
+    if name in {r["name"] for r in rows}:
+        return False, "이미 존재하는 유형입니다."
+    max_order = max([r.get("sort_order", 0) for r in rows] or [0])
+    _db().table("inspection_types").insert({
+        "name": name, "is_active": True, "is_builtin": False,
+        "sort_order": max_order + 1,
+    }).execute()
+    _inspection_type_rows.clear()
+    return True, "추가되었습니다."
+
+
+def set_inspection_type_active(name: str, active: bool) -> None:
+    """유형 활성/비활성 전환."""
+    _db().table("inspection_types").update(
+        {"is_active": active}
+    ).eq("name", name).execute()
+    _inspection_type_rows.clear()
+
+
+def delete_inspection_type(name: str) -> tuple[bool, str]:
+    """유형 삭제. 기본·사용중 유형은 거부. (성공여부, 메시지)."""
+    row = next((r for r in _inspection_type_rows() if r["name"] == name), None)
+    if row and row.get("is_builtin"):
+        return False, "기본 유형은 삭제할 수 없습니다."
+    if _inspection_type_usage(name) > 0:
+        return False, "사용 중인 유형은 삭제할 수 없습니다 (비활성만 가능)."
+    _db().table("inspection_types").delete().eq("name", name).execute()
+    _inspection_type_rows.clear()
+    return True, "삭제되었습니다."
+
+
+def rename_inspection_type(old: str, new: str) -> tuple[bool, str]:
+    """유형 이름 변경. 참조(회차·Task·장비)까지 원자적으로 연쇄 갱신. (성공여부, 메시지)."""
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not new:
+        return False, "새 이름을 입력하세요."
+    if new == old:
+        return False, "이름이 같습니다."
+    names = {r["name"] for r in _inspection_type_rows()}
+    if old not in names:
+        return False, "존재하지 않는 유형입니다."
+    if new in names:
+        return False, "이미 존재하는 이름입니다."
+    try:
+        _db().rpc("rename_inspection_type",
+                  {"old_name": old, "new_name": new}).execute()
+    except Exception:
+        return False, "이름 변경 중 오류가 발생했습니다."
+    # 연쇄 갱신된 테이블 캐시 모두 무효화
+    _inspection_type_rows.clear()
+    _equipment_rows.clear()
+    _round_rows.clear()
+    _task_rows.clear()
+    return True, "이름이 변경되었습니다."
+
+
 def record_equipment_inspection(equipment_id: str, inspected_on: date,
                                 health: HealthStatus) -> None:
     """점검 제출 시 장비의 최근 점검일·건강 상태 갱신."""
@@ -623,12 +930,88 @@ def add_round(r: InspectionRound) -> None:
 
 
 def _refresh_round_status(round_id: str) -> None:
-    """회차의 자동 status를 계산해 갱신."""
+    """회차의 자동 status를 계산해 갱신. 취소된 회차는 갱신하지 않는다."""
+    r = get_round(round_id)
+    if r and r.cancelled:
+        return
     new_status = compute_round_status(round_id)
     _db().table("inspection_rounds").update(
         {"status": new_status}
     ).eq("round_id", round_id).execute()
     _round_rows.clear()
+
+
+def round_cancel_supported() -> bool:
+    """inspection_rounds.cancelled 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("inspection_rounds").select("cancelled").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def cancel_round(round_id: str, reason: str, by: str) -> bool:
+    """회차를 취소 처리(사유 기록). 완료·기취소 회차는 거부(False). 성공 시 True.
+    취소 컬럼 미마이그레이션 등 DB 오류 시에도 False."""
+    r = get_round(round_id)
+    if not r or r.cancelled or r.status == "Completed":
+        return False
+    try:
+        _db().table("inspection_rounds").update({
+            "cancelled": True,
+            "cancel_reason": (reason or "").strip(),
+            "cancelled_at": _iso(TODAY),
+            "cancelled_by": by or "",
+        }).eq("round_id", round_id).execute()
+    except Exception:
+        return False
+    _round_rows.clear()
+    return True
+
+
+def archive_round(round_id: str) -> bool:
+    """취소된 회차를 목록에서 숨김(아카이브). 취소 상태만 가능. 기록은 보존."""
+    r = get_round(round_id)
+    if not r or not r.cancelled or r.archived:
+        return False
+    try:
+        _db().table("inspection_rounds").update(
+            {"archived": True}
+        ).eq("round_id", round_id).execute()
+    except Exception:
+        return False
+    _round_rows.clear()
+    return True
+
+
+def _round_has_completed_task(round_id: str) -> bool:
+    return any(
+        t.status == "Completed"
+        for t in tasks_of_round(round_id, include_excluded=True)
+    )
+
+
+def delete_round(round_id: str, by: str) -> bool:
+    """완료된 Task가 하나도 없는 회차를 취소+숨김 한 번에 처리(원클릭 삭제).
+    완료 Task가 있으면 거부(False) — 그 경우는 기존 point-in-time 취소(사유 입력)만 허용."""
+    r = get_round(round_id)
+    if not r or r.cancelled or _round_has_completed_task(round_id):
+        return False
+    if not cancel_round(round_id, "생성 취소", by):
+        return False
+    return archive_round(round_id)
+
+
+def restore_round(round_id: str) -> bool:
+    """숨긴 회차를 목록에 다시 표시(복구)."""
+    r = get_round(round_id)
+    if not r or not r.archived:
+        return False
+    _db().table("inspection_rounds").update(
+        {"archived": False}
+    ).eq("round_id", round_id).execute()
+    _round_rows.clear()
+    return True
 
 
 def exclude_task(task_id: str, reason: str, by: str) -> None:
@@ -673,8 +1056,26 @@ def next_round_id() -> str:
     return f"{prefix}{next_n:03d}"
 
 
+def deficiency_photo_columns_supported() -> bool:
+    """deficiencies.photo_path 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("deficiencies").select("photo_path").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def deficiency_photo_columns2_supported() -> bool:
+    """deficiencies.photo_path2 등 2번째 사진 슬롯 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("deficiencies").select("photo_path2").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 def add_deficiency(d: Deficiency) -> None:
-    _db().table("deficiencies").insert({
+    payload = {
         "deficiency_id": d.deficiency_id,
         "inspection_date": _iso(d.inspection_date),
         "inspector": d.inspector, "floor": d.floor, "zone": d.zone,
@@ -687,20 +1088,34 @@ def add_deficiency(d: Deficiency) -> None:
         "action_note": d.action_note,
         "action_photo_path": d.action_photo_path,
         "submitter": d.submitter,
-    }).execute()
+        "defect_codes": list(d.defect_codes or []),  # v1.6
+        "defect_other": d.defect_other or "",        # v1.6
+        "checklist_items": dict(d.checklist_items or {}),  # v1.7
+    }
+    if deficiency_photo_columns_supported():
+        payload["photo_path"] = d.photo_path
+        payload["inspection_photo_path"] = d.inspection_photo_path
+    if deficiency_photo_columns2_supported():
+        payload["photo_path2"] = d.photo_path2
+        payload["action_photo_path2"] = d.action_photo_path2
+        payload["inspection_photo_path2"] = d.inspection_photo_path2
+    _db().table("deficiencies").insert(payload).execute()
     _deficiency_rows.clear()
 
 
 def record_deficiency_action(
     deficiency_id: str, action_at: date, action_note: str,
-    confirmer: str, photo: bytes | None,
+    confirmer: str, photo: bytes | None, photo2: bytes | None = None,
 ) -> None:
     """별지5 지적사항에 조치 단계 기록 (구 별지6 통보서 조치 흡수).
-    사진은 action-photos 버킷에 업로드."""
+    사진은 action-photos 버킷에 업로드. photo2는 v1.9(260907) 2번째 조치 후 사진(선택)."""
     photo_path = None
     if photo:
         # 통보서 사진 키 컨벤션 재사용 (deficiency_id로 저장)
         photo_path = _upload_action_photo(deficiency_id, photo)
+    photo_path2 = None
+    if photo2:
+        photo_path2 = _upload_action_photo(f"{deficiency_id}-2", photo2)
     payload = {
         "action_done": True,
         "action_at": _iso(action_at),
@@ -709,6 +1124,8 @@ def record_deficiency_action(
     }
     if photo_path:
         payload["action_photo_path"] = photo_path
+    if photo_path2 and deficiency_photo_columns2_supported():
+        payload["action_photo_path2"] = photo_path2
     _db().table("deficiencies").update(payload).eq(
         "deficiency_id", deficiency_id
     ).execute()
@@ -741,6 +1158,9 @@ def add_malfunction(m: Malfunction) -> None:
         "action_done": m.action_done,
         "action_at": _iso(m.action_at),
         "action_note": m.action_note,
+        "floor": m.floor,
+        "zone": m.zone,
+        "spot_id": m.spot_id,
     }).execute()
     _malfunction_rows.clear()
 
@@ -818,20 +1238,20 @@ def _max_seq_in_ids(ids: list[str], prefix: str) -> int:
 
 def next_equipment_id() -> str:
     """다음 장비 ID (EQ-NNNN)."""
-    ids = [e.equipment_id for e in load_equipment()]
+    ids = [e.equipment_id for e in load_equipment(include_retired=True)]
     return f"EQ-{_max_seq_in_ids(ids, 'EQ-') + 1:04d}"
 
 
 def next_serial(prefix: str = "PYRO") -> str:
     """다음 시리얼 번호 (PYRO-NNNNN)."""
-    serials = [e.serial for e in load_equipment()]
+    serials = [e.serial for e in load_equipment(include_retired=True)]
     return f"{prefix}-{_max_seq_in_ids(serials, f'{prefix}-') + 1:05d}"
 
 
 def next_location_id(floor: str, zone: str) -> str:
     """같은 층/구역의 다음 순번 위치 ID. 예: B3-SEC4-W3"""
     base = f"{floor}-{zone}-"
-    existing = [e.location_id for e in load_equipment() if e.location_id.startswith(base)]
+    existing = [e.location_id for e in load_equipment(include_retired=True) if e.location_id.startswith(base)]
     # 위치 ID는 -W2, -01 등 다양한 패턴이라 단순히 카운트만
     return f"{base}W{len(existing) + 1}"
 
@@ -866,8 +1286,8 @@ def next_notice_no(d: date) -> str:
 # ---------- 집계 (KPI) ----------
 
 def equipment_kpis() -> dict:
-    eq_rows = _equipment_rows()
-    eq = [_row_to_equipment(r) for r in eq_rows]
+    eq = load_equipment()
+    eq_rows = [r for r in _equipment_rows() if bool(r.get("active", True))]
     recent_threshold = TODAY - timedelta(days=2)
     month_start = TODAY.replace(day=1)
     new_this_month = 0
@@ -898,7 +1318,7 @@ def notice_action_rate() -> float | None:
 
 
 def task_kpis() -> dict:
-    tasks = load_tasks()
+    tasks = [t for t in load_tasks() if t.task_type != MAL_ROUND_TYPE]
     return {
         "total": len(tasks),
         "overdue": sum(1 for t in tasks if t.status == "Overdue"),
@@ -908,7 +1328,7 @@ def task_kpis() -> dict:
 
 
 def field_kpis() -> dict:
-    tasks = load_tasks()
+    tasks = [t for t in load_tasks() if t.task_type != MAL_ROUND_TYPE]
     defs = load_deficiencies()
     return {
         "inspections_today": sum(1 for t in tasks if t.due_date == TODAY),

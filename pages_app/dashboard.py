@@ -1,4 +1,4 @@
-"""대시보드 페이지 — 2탭 구조 (현황 요약 · Location)."""
+"""대시보드 페이지 — 2탭 구조 (현황 요약 · 층별 도면)."""
 from __future__ import annotations
 
 import base64
@@ -12,7 +12,7 @@ from lib.ui import TASK_STATUS_KO, badge, fmt_date, page_header, render_kpi_row
 
 
 # 새 8층 체계 (PDF 도면 기준) — Location 탭에서 사용
-LOCATION_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
+LOCATION_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
 ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
 
 
@@ -410,10 +410,16 @@ def render() -> None:
                      use_container_width=True, key="open_inspect_qr"):
             _inspect_qr_dialog()
 
-    tab_summary, tab_grid = st.tabs(["현황 요약", "Location"])
-    with tab_summary:
+    # v1.8: st.tabs → st.radio — 층별 도면 탭의 도면 잠금 토글 등 rerun 시 탭 유지
+    _dash_section = st.radio(
+        "대시보드 탭",
+        ["현황 요약", "층별 도면"],
+        horizontal=True, label_visibility="collapsed",
+        key="dashboard_section",
+    )
+    if _dash_section == "현황 요약":
         _summary_tab()
-    with tab_grid:
+    else:
         _grid_tab()
 
 
@@ -439,7 +445,6 @@ def _inspect_qr_dialog() -> None:
         ("조치 입력",
          f"발급된 통보서의 후속 조치 ({pending_notices}건 대기)",
          pending_notices > 0),
-        ("오동작 등록", "별지9 소방시설 오동작 관리대장 row 추가", True),
     ]
     # 비활성 옵션은 라디오에서 제외 + 안내
     enabled = [a for a in actions if a[2]]
@@ -500,13 +505,10 @@ def _inspect_qr_dialog() -> None:
             if sel == "지적 입력":
                 st.session_state["page"] = "deficiencies"
                 st.session_state["_open_inspect_dialog"] = True
-            elif sel == "조치 입력":
+            else:  # 조치 입력
                 # 점검 작업 페이지 (focus_notice는 페이지가 자동 처리)
                 st.session_state["page"] = "inspection"
                 st.session_state["focus_equipment"] = eq.equipment_id
-            else:  # 오동작 등록
-                st.session_state["page"] = "deficiencies"
-                st.session_state["_open_malfunction_dialog"] = True
             st.rerun()
 
 
