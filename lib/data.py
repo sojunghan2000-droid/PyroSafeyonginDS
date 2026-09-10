@@ -49,6 +49,26 @@ def floors_table_supported() -> bool:
     except Exception:
         return False
 
+
+def load_all_floors(include_temp: bool = True) -> list[str]:
+    """전체 장소 code 목록 — CORE_FLOORS + DB에 등록된 커스텀 장소(sort_order 순).
+    include_temp=False면 CORE_FLOORS 중 TEMP를 제외한다
+    (위치 마스터 화면이 기존에 TEMP를 안 보여주던 동작을 그대로 유지)."""
+    core = [f for f in CORE_FLOORS if include_temp or f != "TEMP"]
+    custom = [r["code"] for r in _floor_rows()]
+    return core + custom
+
+
+def floor_display_name(code: str) -> str:
+    """장소 code → 화면 표시명. CORE_FLOORS는 code 자체가 표시명이다."""
+    if code in CORE_FLOORS:
+        return code
+    for r in _floor_rows():
+        if r["code"] == code:
+            return r["display_name"]
+    return code
+
+
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
 _CACHE_TTL = 15
 
@@ -542,6 +562,16 @@ def _deficiency_rows() -> list[dict]:
 def _notice_rows() -> list[dict]:
     return (_db().table("notices").select("*")
             .order("inspection_date", desc=True).execute().data)
+
+
+@st.cache_data(ttl=_CACHE_TTL)
+def _floor_rows() -> list[dict]:
+    """floors 테이블 전체 (sort_order 순). 마이그레이션 전이면 빈 리스트."""
+    try:
+        return (_db().table("floors").select("*")
+                .order("sort_order").execute().data)
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl=_CACHE_TTL)
