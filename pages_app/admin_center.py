@@ -386,7 +386,11 @@ def _floor_add_dialog() -> None:
                 st.session_state.pop(k, None)
             st.rerun()
     with bcol2:
-        submit_disabled = pdf_file is None or not display_name.strip()
+        submit_disabled = (
+            pdf_file is None
+            or not display_name.strip()
+            or (pdf_file is not None and preview_png is None)
+        )
         if st.button("확정", type="primary", use_container_width=True,
                      key="floor_add_submit", disabled=submit_disabled):
             try:
