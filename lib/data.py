@@ -84,6 +84,89 @@ def get_floor_image_bytes(code: str) -> bytes | None:
     return None
 
 
+def render_floor_pdf_preview(pdf_bytes: bytes) -> bytes:
+    """PDF 1페이지를 PNG bytes로 렌더링 (미리보기용, 아무것도 저장하지 않음).
+    scripts/convert_floor_pdfs.py와 동일하게 DPI 180 사용."""
+    import fitz  # 이 함수를 쓸 때만 필요한 무거운 의존성이라 지연 import
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page = doc.load_page(0)
+        matrix = fitz.Matrix(180 / 72, 180 / 72)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        return pix.tobytes("png")
+    finally:
+        doc.close()
+
+
+def _floor_code_from_name(display_name: str, existing_codes: set[str]) -> str:
+    """표시명 → 장소 code. 영문/숫자만 추출, 대문자화, 최대 12자.
+    비어있으면 PLACE로 폴백. 기존 code와 충돌하면 숫자 접미사를 붙인다."""
+    import re
+
+    raw = re.sub(r"[^A-Za-z0-9]", "", display_name).upper()[:12] or "PLACE"
+    if raw not in existing_codes:
+        return raw
+    n = 2
+    while True:
+        suffix = str(n)
+        candidate = raw[: 12 - len(suffix)] + suffix
+        if candidate not in existing_codes:
+            return candidate
+        n += 1
+
+
+def preview_floor_code(display_name: str) -> str:
+    """장소 추가 확정 전, 자동 생성될 code를 미리 계산 (저장하지 않음)."""
+    existing = set(CORE_FLOORS) | {r["code"] for r in _floor_rows()}
+    return _floor_code_from_name(display_name.strip(), existing)
+
+
+def add_floor(display_name: str, pdf_bytes: bytes) -> str:
+    """PDF 1페이지를 PNG로 렌더링해 Storage(floor-plans 버킷)에 올리고
+    floors 테이블에 등록한다. 반환값은 새로 생성된 code.
+    Storage 업로드나 DB insert가 실패하면 예외를 그대로 올린다
+    (이미지만 올라가고 테이블엔 없는 반쪽 상태를 만들지 않기 위해,
+    업로드를 먼저 하고 insert가 실패하면 업로드분 정리는 하지 않는다 —
+    같은 code로 재시도하면 upsert로 덮어써지므로 안전하다)."""
+    name = display_name.strip()
+    if not name:
+        raise ValueError("표시명을 입력해 주세요.")
+
+    png_bytes = render_floor_pdf_preview(pdf_bytes)
+
+    existing = set(CORE_FLOORS) | {r["code"] for r in _floor_rows()}
+    code = _floor_code_from_name(name, existing)
+    image_path = f"{code}.png"
+
+    _db().storage.from_(FLOOR_PLAN_BUCKET).upload(
+        image_path, png_bytes,
+        {"content-type": "image/png", "upsert": "true"},
+    )
+
+    rows = _floor_rows()
+    max_order = max([r["sort_order"] for r in rows], default=len(CORE_FLOORS) - 1)
+    _db().table("floors").insert({
+        "code": code,
+        "display_name": name,
+        "image_path": image_path,
+        "sort_order": max_order + 1,
+    }).execute()
+    _floor_rows.clear()
+    return code
+
+
+def rename_floor(code: str, new_display_name: str) -> None:
+    """커스텀 장소의 표시명 수정. CORE_FLOORS 대상이면 에러."""
+    if code in CORE_FLOORS:
+        raise ValueError(f"{code}는 기본 층이라 이름을 바꿀 수 없습니다.")
+    name = new_display_name.strip()
+    if not name:
+        raise ValueError("표시명을 입력해 주세요.")
+    _db().table("floors").update({"display_name": name}).eq("code", code).execute()
+    _floor_rows.clear()
+
+
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
 _CACHE_TTL = 15
 
