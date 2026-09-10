@@ -31,8 +31,6 @@ EQ_CATEGORIES = [
 
 # 등록 가능한 층 (구 명칭 — 일부 로직 호환용)
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
-# 실제 도면 PNG(assets/floors)가 있는 8개 층 — 신규 위치 생성 좌표 픽업용
-SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
 
 
 INSPECTION_TYPES = [
@@ -2018,7 +2016,7 @@ def equipment_dialog() -> None:
         # 신규 위치 즉석 생성 — 도면 클릭으로 좌표 픽업 + 등록과 동시에 spot 정식 생성
         nc1, nc2 = st.columns([1, 2])
         with nc1:
-            new_floor = st.selectbox("층", options=SPOT_FLOORS, key="eq_dlg_new_floor")
+            new_floor = st.selectbox("층", options=data.load_all_floors(), key="eq_dlg_new_floor")
         with nc2:
             new_room = st.text_input(
                 "위치 설명(방이름)",
