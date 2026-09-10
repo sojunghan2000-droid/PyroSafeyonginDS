@@ -347,6 +347,59 @@ def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | Non
     return fig
 
 
+@st.dialog("장소 추가", width="large")
+def _floor_add_dialog() -> None:
+    """PDF 도면 업로드 → 표시명 입력 → 확정 전 렌더링 미리보기 → 저장."""
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.9rem; margin-bottom:0.5rem;'>"
+        "PDF 도면 1장을 업로드하면 1페이지를 이미지로 변환해 미리 보여줍니다. "
+        "확인 후 확정하면 다른 장소들처럼 층 선택 목록에 바로 나타납니다."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    pdf_file = st.file_uploader("PDF 도면 *", type=["pdf"], key="floor_add_pdf")
+    default_name = pdf_file.name.rsplit(".", 1)[0] if pdf_file is not None else ""
+    display_name = st.text_input(
+        "표시명 *",
+        value=st.session_state.get("floor_add_name", default_name),
+        key="floor_add_name",
+        placeholder="예: 별관 2층",
+    )
+
+    preview_png = None
+    if pdf_file is not None:
+        try:
+            preview_png = data.render_floor_pdf_preview(pdf_file.getvalue())
+        except Exception as e:
+            st.error(f"PDF를 읽지 못했습니다: {e}")
+        if preview_png is not None:
+            st.image(preview_png, caption="미리보기 (아직 저장되지 않음)",
+                     use_container_width=True)
+            preview_code = data.preview_floor_code(display_name.strip() or default_name)
+            st.caption(f"생성될 코드: `{preview_code}`")
+
+    bcol1, bcol2 = st.columns([1, 1])
+    with bcol1:
+        if st.button("취소", use_container_width=True, key="floor_add_cancel"):
+            for k in ("floor_add_pdf", "floor_add_name"):
+                st.session_state.pop(k, None)
+            st.rerun()
+    with bcol2:
+        submit_disabled = pdf_file is None or not display_name.strip()
+        if st.button("확정", type="primary", use_container_width=True,
+                     key="floor_add_submit", disabled=submit_disabled):
+            try:
+                code = data.add_floor(display_name.strip(), pdf_file.getvalue())
+            except Exception as e:
+                st.error(f"장소 추가에 실패했습니다: {e}")
+            else:
+                for k in ("floor_add_pdf", "floor_add_name"):
+                    st.session_state.pop(k, None)
+                st.session_state["admin_spot_just_added"] = f"장소 '{code}' 추가 완료."
+                st.rerun()
+
+
 @st.dialog("신규 위치 추가", width="large")
 def _spot_define_dialog() -> None:
     """도면 클릭으로 좌표 픽업 + 속성 입력 + 저장. 위치 마스터 페이지에서 진입."""
@@ -553,8 +606,8 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
 
 
 def _spot_master_tab() -> None:
-    # 상단 헤더 + [+ 신규 위치 추가] 버튼
-    head_l, head_r = st.columns([3, 1])
+    # 상단 헤더 + [+ 장소 추가] + [+ 신규 위치 추가] 버튼
+    head_l, head_r = st.columns([3, 1.6])
     with head_l:
         st.markdown(
             "<div style='color:#64748B; font-size:0.92rem;'>"
@@ -567,12 +620,22 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
     with head_r:
-        if st.button("+ 신규 위치 등록", type="secondary",
-                     use_container_width=True, key="admin_spot_open_dlg"):
-            for k in ("admin_spot_room", "admin_spot_notes",
-                      "admin_spot_x_input", "admin_spot_y_input"):
-                st.session_state.pop(k, None)
-            _spot_define_dialog()
+        btn_place, btn_spot = st.columns(2)
+        with btn_place:
+            floors_ready = data.floors_table_supported()
+            if st.button("+ 장소 추가", type="secondary",
+                         use_container_width=True, key="admin_floor_open_dlg",
+                         disabled=not floors_ready):
+                _floor_add_dialog()
+            if not floors_ready:
+                st.caption("DB 마이그레이션 필요")
+        with btn_spot:
+            if st.button("+ 신규 위치 등록", type="secondary",
+                         use_container_width=True, key="admin_spot_open_dlg"):
+                for k in ("admin_spot_room", "admin_spot_notes",
+                          "admin_spot_x_input", "admin_spot_y_input"):
+                    st.session_state.pop(k, None)
+                _spot_define_dialog()
 
     just_added = st.session_state.pop("admin_spot_just_added", None)
     if just_added:
