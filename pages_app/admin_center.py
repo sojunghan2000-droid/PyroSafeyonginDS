@@ -6,7 +6,6 @@ spot 객체 정의 UI. 향후 사용자 관리·시스템 설정 등의 탭을 �
 from __future__ import annotations
 
 import base64
-from pathlib import Path
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -16,20 +15,17 @@ from lib.data import Spot
 from lib.floor_widget import control_toggle, legend_html, plotly_config
 from lib.ui import badge, page_header
 
-# 새 8개 층 (대시보드 Location 탭과 동일 순서)
-ADMIN_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
-ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
-
-# 도면 PNG 모두 동일 픽셀 크기 (convert_floor_pdfs.py 기준)
+# 도면 PNG 모두 동일 픽셀 크기로 취급 (convert_floor_pdfs.py 기준) — 신규 업로드
+# 장소는 원본 PDF 비율에 따라 다를 수 있지만, stretch 렌더링이라 좌표(%)는 그대로 맞는다.
 FIG_W = 2978
 FIG_H = 2105
 
 
 def _floor_image_uri(floor: str) -> str | None:
-    p = ASSETS_FLOORS_DIR / f"{floor}.png"
-    if not p.exists():
+    img = data.get_floor_image_bytes(floor)
+    if img is None:
         return None
-    return f"data:image/png;base64,{base64.b64encode(p.read_bytes()).decode('ascii')}"
+    return f"data:image/png;base64,{base64.b64encode(img).decode('ascii')}"
 
 
 def _make_floor_fig(floor: str, spots: list[Spot],
@@ -417,7 +413,7 @@ def _spot_define_dialog() -> None:
 
     floor = st.selectbox(
         "층 선택",
-        options=ADMIN_FLOORS,
+        options=data.load_all_floors(include_temp=False),
         key="admin_spot_dlg_floor",
     )
     spots = data.load_spots(floor)
@@ -575,14 +571,15 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
     st.markdown(legend_html([
         ("#F59E0B", "등록된 위치(spot)"),
     ]), unsafe_allow_html=True)
+    all_floors = data.load_all_floors(include_temp=False)
     all_spots = spots  # 이미 전체 로드됨
-    by_floor: dict[str, list[Spot]] = {f: [] for f in ADMIN_FLOORS}
+    by_floor: dict[str, list[Spot]] = {f: [] for f in all_floors}
     for s in all_spots:
         by_floor.setdefault(s.floor, []).append(s)
 
     n_cols = 4
-    for row_start in range(0, len(ADMIN_FLOORS), n_cols):
-        row_floors = ADMIN_FLOORS[row_start:row_start + n_cols]
+    for row_start in range(0, len(all_floors), n_cols):
+        row_floors = all_floors[row_start:row_start + n_cols]
         cols = st.columns(n_cols)
         for col, fl in zip(cols, row_floors):
             with col:
@@ -647,10 +644,28 @@ def _spot_master_tab() -> None:
 
     floor = st.selectbox(
         "층 선택",
-        options=["전체"] + list(ADMIN_FLOORS),
+        options=["전체"] + data.load_all_floors(include_temp=False),
         key="admin_spot_floor",
     )
     spots = data.load_spots() if floor == "전체" else data.load_spots(floor)
+
+    # 커스텀 장소(DB에 등록된 것)만 표시명 수정 가능 — CORE_FLOORS는 코드 자체가 표시명
+    if floor != "전체" and floor not in data.CORE_FLOORS:
+        with st.expander(f"'{data.floor_display_name(floor)}' 표시명 수정",
+                         expanded=False):
+            new_name = st.text_input(
+                "새 표시명",
+                value=data.floor_display_name(floor),
+                key=f"floor_rename_{floor}",
+            )
+            if st.button("저장", key=f"floor_rename_save_{floor}"):
+                try:
+                    data.rename_floor(floor, new_name)
+                except Exception as e:
+                    st.error(str(e))
+                else:
+                    st.success("표시명을 수정했습니다.")
+                    st.rerun()
 
     # --- 도면 미리보기 (읽기 전용, v1.7) ---
     _spot_master_floor_preview(floor, spots)
