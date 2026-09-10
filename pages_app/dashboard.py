@@ -2,18 +2,12 @@
 from __future__ import annotations
 
 import base64
-from pathlib import Path
 
 import plotly.graph_objects as go
 import streamlit as st
 
 from lib import data
 from lib.ui import TASK_STATUS_KO, badge, fmt_date, page_header, render_kpi_row
-
-
-# 새 8층 체계 (PDF 도면 기준) — Location 탭에서 사용
-LOCATION_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
-ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
 
 
 def _summary_tab() -> None:
@@ -126,12 +120,11 @@ def _card_color(stats: dict) -> tuple[str, str]:
 
 
 def _floor_image_uri(floor: str) -> str | None:
-    """assets/floors/{floor}.png를 data URI로 (plotly 백그라운드용)."""
-    p = ASSETS_FLOORS_DIR / f"{floor}.png"
-    if not p.exists():
+    """장소 도면을 data URI로 (plotly 백그라운드용)."""
+    img = data.get_floor_image_bytes(floor)
+    if img is None:
         return None
-    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
+    return f"data:image/png;base64,{base64.b64encode(img).decode('ascii')}"
 
 
 _HEALTH_COLOR = {"PASS": "#10B981", "FAIL": "#DC2626", "DUE": "#3B82F6"}
@@ -351,17 +344,18 @@ def _location_card_html(floor: str, stats: dict) -> str:
 
 def _grid_tab() -> None:
     """탭 2 — Location: 8개 층 카드 그리드 + 도면 모달."""
+    floors = data.load_all_floors()
     eq_all = data.load_equipment()
     notices = data.load_notices()
 
-    all_stats = {fl: _floor_stats(fl, eq_all, notices) for fl in LOCATION_FLOORS}
+    all_stats = {fl: _floor_stats(fl, eq_all, notices) for fl in floors}
     total = sum(s["total"] for s in all_stats.values())
     fail_total = sum(s["fail"] for s in all_stats.values())
     due_total = sum(s["due"] for s in all_stats.values())
     pending_total = sum(s["pending_notices"] for s in all_stats.values())
 
     render_kpi_row([
-        ("총 장비", f"{total}", f"{len(LOCATION_FLOORS)}개 층", "default"),
+        ("총 장비", f"{total}", f"{len(floors)}개 층", "default"),
         ("불량", f"{fail_total}", "즉시 조치 필요",
          "alert" if fail_total else "default"),
         ("점검 도래", f"{due_total}", "DUE 임박",
@@ -380,8 +374,8 @@ def _grid_tab() -> None:
     # 4열 × 2행 카드 그리드
     GRID_COLS = 4
     pending_open: str | None = None
-    for row_start in range(0, len(LOCATION_FLOORS), GRID_COLS):
-        row = LOCATION_FLOORS[row_start:row_start + GRID_COLS]
+    for row_start in range(0, len(floors), GRID_COLS):
+        row = floors[row_start:row_start + GRID_COLS]
         cols = st.columns(GRID_COLS)
         for col, fl in zip(cols, row):
             with col:
