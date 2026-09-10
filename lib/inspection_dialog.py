@@ -264,13 +264,11 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     반환: 선택된 항목 dict ({'type': 'equipment'|'empty_spot', 'data': ...}) 또는 None.
     """
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
         control_toggle, legend_html, plotly_config,
     )
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
     # 후보 장비 또는 spot 정의된 층 모음 (빈 spot도 추가 대상이므로 spot 층 포함)
@@ -309,11 +307,11 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             ("#64748B", "이미 포함 (선택 불가)"),
         ]), unsafe_allow_html=True)
 
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.warning(f"{floor} 도면 이미지가 없습니다.")
         return None
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -627,13 +625,11 @@ def _location_map_picker(key_prefix: str, highlight_category: str | None = None)
     반환: {"floor","zone","spot_id","label"} 또는 None(미선택).
     highlight_category와 category가 일치하는 장비를 파란색 강조."""
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
         control_toggle, legend_html, plotly_config, lock_overlay_css,
     )
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
     all_eq = data.load_equipment()
@@ -654,11 +650,11 @@ def _location_map_picker(key_prefix: str, highlight_category: str | None = None)
             ("#94A3B8", "그 외 장비 · ◇ 빈 위치"),
         ]), unsafe_allow_html=True)
 
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.warning(f"{floor} 도면 이미지가 없습니다.")
         return st.session_state.get(f"{key_prefix}_picked")
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -766,19 +762,17 @@ def _spot_preview_map(sel_spot) -> None:
     클릭·선택·세션상태 변경 없음(정적).
     """
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import plotly_config
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
     floor = sel_spot.floor
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.warning(f"{floor} 도면 이미지가 없습니다.")
         return
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     spots = data.load_spots(floor)
     floor_eq = [e for e in data.load_equipment() if e.floor == floor and e.spot_id]
@@ -1223,7 +1217,6 @@ def task_inspect_inline(task_id: str) -> None:
         # 2) 도면 spot 선택 정정 — 실제 도면에서 마커 클릭
         else:  # 도면 spot 선택
             import base64
-            from pathlib import Path
             import plotly.graph_objects as go
             from lib.floor_widget import (
                 control_toggle, legend_html, lock_overlay_css, plotly_config,
@@ -1244,10 +1237,9 @@ def task_inspect_inline(task_id: str) -> None:
                     key=f"tsk_loc_spot_floor_{task_id}",
                 )
 
-                ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
                 FIG_W, FIG_H = 2978, 2105
-                img_path = ASSETS_DIR / f"{floor_pick}.png"
-                if not img_path.exists():
+                img_bytes = data.get_floor_image_bytes(floor_pick)
+                if img_bytes is None:
                     st.warning(f"{floor_pick} 도면 이미지가 없습니다.")
                 else:
                     cc, lc = st.columns([1.2, 5])
@@ -1262,7 +1254,7 @@ def task_inspect_inline(task_id: str) -> None:
                         ]), unsafe_allow_html=True)
 
                     uri = "data:image/png;base64," + base64.b64encode(
-                        img_path.read_bytes()).decode()
+                        img_bytes).decode()
                     fig = go.Figure()
                     fig.add_layout_image(dict(
                         source=uri, xref="x", yref="y",
@@ -1833,19 +1825,17 @@ def _eq_new_spot_map(floor: str):
     빈 곳(격자) 클릭 시 (x_pct, y_pct) 반환, 아니면 None.
     기존 spot은 노란 점(참고), 현재 선택 좌표는 파란 별로 표시."""
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
         control_toggle, plotly_config, lock_overlay_css, legend_html,
     )
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.caption(f"({floor} 도면 이미지가 없어 아래 좌표를 직접 입력하세요)")
         return None
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -2016,7 +2006,10 @@ def equipment_dialog() -> None:
         # 신규 위치 즉석 생성 — 도면 클릭으로 좌표 픽업 + 등록과 동시에 spot 정식 생성
         nc1, nc2 = st.columns([1, 2])
         with nc1:
-            new_floor = st.selectbox("층", options=data.load_all_floors(), key="eq_dlg_new_floor")
+            new_floor = st.selectbox(
+                "층", options=data.load_all_floors(),
+                format_func=data.floor_display_name, key="eq_dlg_new_floor",
+            )
         with nc2:
             new_room = st.text_input(
                 "위치 설명(방이름)",

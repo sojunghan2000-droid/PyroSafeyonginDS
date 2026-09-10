@@ -414,6 +414,7 @@ def _spot_define_dialog() -> None:
     floor = st.selectbox(
         "층 선택",
         options=data.load_all_floors(include_temp=False),
+        format_func=data.floor_display_name,
         key="admin_spot_dlg_floor",
     )
     spots = data.load_spots(floor)
@@ -587,7 +588,7 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
                 mini = _make_floor_fig(fl, fspots, show_grid=False, height=150)
                 st.markdown(
                     f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
-                    f"margin-bottom:0.1rem;'>{fl} "
+                    f"margin-bottom:0.1rem;'>{data.floor_display_name(fl)} "
                     f"<span style='color:#94A3B8; font-weight:500;'>({len(fspots)})</span></div>",
                     unsafe_allow_html=True,
                 )
@@ -645,6 +646,7 @@ def _spot_master_tab() -> None:
     floor = st.selectbox(
         "층 선택",
         options=["전체"] + data.load_all_floors(include_temp=False),
+        format_func=data.floor_display_name,
         key="admin_spot_floor",
     )
     spots = data.load_spots() if floor == "전체" else data.load_spots(floor)

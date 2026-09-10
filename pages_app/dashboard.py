@@ -326,7 +326,8 @@ def _location_card_html(floor: str, stats: dict) -> str:
         f"padding:0.85rem 1rem 0.7rem; min-height:130px;'>"
         f"<div style='display:flex; justify-content:space-between; "
         f"align-items:baseline; margin-bottom:0.45rem;'>"
-        f"<div style='font-size:1.3rem; font-weight:700; color:#0F172A;'>{floor}</div>"
+        f"<div style='font-size:1.3rem; font-weight:700; color:#0F172A;'>"
+        f"{data.floor_display_name(floor)}</div>"
         f"<div style='background:{border}15; color:{border}; "
         f"padding:0.15rem 0.5rem; border-radius:999px; "
         f"font-size:0.72rem; font-weight:600;'>{label}</div>"
@@ -381,7 +382,7 @@ def _grid_tab() -> None:
             with col:
                 st.markdown(_location_card_html(fl, all_stats[fl]),
                             unsafe_allow_html=True)
-                if st.button(f"{fl} 상세 보기 →", key=f"loc_card_{fl}",
+                if st.button(f"{data.floor_display_name(fl)} 상세 보기 →", key=f"loc_card_{fl}",
                              use_container_width=True):
                     pending_open = fl
 

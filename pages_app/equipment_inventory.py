@@ -22,15 +22,13 @@ def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
     """시설 관리 층 도면 미리보기 (읽기 전용) — 장비를 건강상태 색 마커로 표시.
     height로 단일(460)/미니맵(180) 크기 구분."""
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
 
-    ASSETS = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
-    p = ASSETS / f"{floor}.png"
-    if not p.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         return None
-    uri = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -625,7 +623,7 @@ def render() -> None:
                             fl_eq = [e for e in rows if e.floor == fl]
                             st.markdown(
                                 f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
-                                f"margin-bottom:0.1rem;'>{fl} "
+                                f"margin-bottom:0.1rem;'>{data.floor_display_name(fl)} "
                                 f"<span style='color:#94A3B8; font-weight:500;'>"
                                 f"({len(fl_eq)})</span></div>",
                                 unsafe_allow_html=True,

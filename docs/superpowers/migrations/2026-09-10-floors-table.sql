@@ -8,3 +8,4 @@ create table if not exists public.floors (
   sort_order   int  not null,
   created_at   timestamptz not null default now()
 );
+alter table public.floors enable row level security;

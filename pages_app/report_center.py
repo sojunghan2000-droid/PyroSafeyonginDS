@@ -875,6 +875,7 @@ def render() -> None:
         with _scope_colq:
             _sel_floor_q = st.selectbox(
                 "출력 범위", ["전체 (모든 층)"] + data.load_all_floors(),
+                format_func=data.floor_display_name,
                 key="qr_sticker_floor",
             )
         _qr_eq = data.load_equipment()
