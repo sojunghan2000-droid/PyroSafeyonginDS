@@ -69,6 +69,21 @@ def floor_display_name(code: str) -> str:
     return code
 
 
+def get_floor_image_bytes(code: str) -> bytes | None:
+    """장소 도면 PNG bytes. CORE_FLOORS는 로컬 assets/floors/,
+    커스텀 장소는 Storage(floor-plans 버킷)에서 가져온다. 실패 시 None."""
+    if code in CORE_FLOORS:
+        p = _ASSETS_FLOORS_DIR / f"{code}.png"
+        return p.read_bytes() if p.exists() else None
+    for r in _floor_rows():
+        if r["code"] == code:
+            try:
+                return _db().storage.from_(FLOOR_PLAN_BUCKET).download(r["image_path"])
+            except Exception:
+                return None
+    return None
+
+
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
 _CACHE_TTL = 15
 
