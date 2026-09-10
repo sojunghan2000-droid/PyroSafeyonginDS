@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import streamlit as st
@@ -31,6 +32,22 @@ ResolutionStatus = Literal["완료", "불가"]
 MAL_ROUND_TYPE = "오동작 접수"  # 직접 등록 오동작에 발행하는 회차/Task 유형 (정기 점검과 구분)
 
 ACTION_PHOTO_BUCKET = "action-photos"
+FLOOR_PLAN_BUCKET = "floor-plans"
+
+# 기존 8개 층(PDF 도면 기준) + TEMP(가설동). 로컬 assets/floors/*.png로 제공되며
+# 이 리스트는 바뀌지 않는다 — 새로 추가되는 장소는 floors 테이블에 저장된다.
+CORE_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
+_ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+
+
+def floors_table_supported() -> bool:
+    """floors 테이블 마이그레이션이 반영됐는지 확인 (probe). 미반영이면 False —
+    호출부는 '장소 추가' UI를 비활성화해 앱이 크래시하지 않게 한다."""
+    try:
+        _db().table("floors").select("code").limit(1).execute()
+        return True
+    except Exception:
+        return False
 
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
 _CACHE_TTL = 15
