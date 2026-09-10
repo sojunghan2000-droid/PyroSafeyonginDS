@@ -148,3 +148,12 @@ begin
       from jsonb_array_elements_text(inspection_types) t)
     where inspection_types ? old_name;
 end $$;
+
+-- 9) 장소 추가 기능 (2026-09-10) — 관리자가 앱에서 직접 등록하는 커스텀 장소.
+create table if not exists public.floors (
+  code         text primary key,
+  display_name text not null,
+  image_path   text not null,
+  sort_order   int  not null,
+  created_at   timestamptz not null default now()
+);
