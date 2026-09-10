@@ -871,11 +871,10 @@ def render() -> None:
                    "전체 또는 특정 층만 선택할 수 있습니다.")
     midq, _ = st.columns([2, 1])
     with midq:
-        from pages_app.dashboard import LOCATION_FLOORS
         _scope_colq, _btn_colq = st.columns([2.2, 1.3], vertical_alignment="bottom")
         with _scope_colq:
             _sel_floor_q = st.selectbox(
-                "출력 범위", ["전체 (모든 층)"] + list(LOCATION_FLOORS),
+                "출력 범위", ["전체 (모든 층)"] + data.load_all_floors(),
                 key="qr_sticker_floor",
             )
         _qr_eq = data.load_equipment()
