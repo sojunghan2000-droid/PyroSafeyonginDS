@@ -55,11 +55,6 @@ THEME_CSS = """
         gap: 1.5rem;
         z-index: 9000;
     }
-    .ps-topbar-brand {
-        font-size: 1.2rem; font-weight: 700; color: #2563EB;
-        letter-spacing: -0.01em;
-        flex-shrink: 0;
-    }
     .ps-topbar-spacer { flex: 1; }
     .ps-topbar-actions {
         display: flex; align-items: center; gap: 0.75rem;
@@ -118,9 +113,18 @@ THEME_CSS = """
         background: #F1F5F9 !important;
         color: #0F172A !important;
     }
-    /* st.popover trigger의 chevron(expand_more) 숨김 — 알림 벨에는 불필요 */
-    .st-key-notify_btn button div[aria-hidden="true"] {
+    /* st.popover trigger의 chevron(expand_more) 숨김 — 알림 벨에는 불필요
+       (Streamlit 내부 emotion 스타일과의 우선순위 충돌 방지를 위해 specificity를 높이고
+        display 외 속성도 함께 덮어써 이중 방어) */
+    .st-key-notify_btn.st-key-notify_btn button svg,
+    .st-key-notify_btn.st-key-notify_btn button [data-testid="stIconMaterial"][data-testid="stIconMaterial"],
+    .st-key-notify_btn.st-key-notify_btn button div[aria-hidden="true"][aria-hidden="true"] {
         display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
     }
     /* 1+ 카운트 표시 시 빨강 강조 (body 클래스 기반 토글) */
     body.ps-has-alerts .st-key-notify_btn button {
@@ -547,11 +551,37 @@ def render_topbar(_active_page: str | None = None) -> None:
     """전역 상단바 렌더. 인자는 하위 호환용으로만 받고 사용하지 않는다 (PRD R6)."""
     html = """
 <div class="ps-topbar">
-    <div class="ps-topbar-brand">Samsung C&amp;T</div>
     <div class="ps-topbar-spacer"></div>
 </div>
 """
     st.markdown(html, unsafe_allow_html=True)
+    # v1.9(260907): 브랜드 텍스트를 클릭 가능한 버튼으로 — 대시보드로 이동.
+    # 순수 HTML은 Python 콜백을 못 부르므로 st.button을 기존 텍스트처럼 스타일링해 겹쳐 배치.
+    st.markdown(
+        """<style>
+        .st-key-topbar_brand {
+            position: fixed; top: 13px; left: 1.75rem;
+            z-index: 9001;
+            width: fit-content !important;
+            display: flex !important; flex-direction: row !important;
+            align-items: center !important;
+        }
+        .st-key-topbar_brand button {
+            background: transparent !important; border: none !important;
+            box-shadow: none !important; padding: 0 !important;
+            height: 38px !important; min-height: 38px !important;
+            display: flex !important; align-items: center !important;
+            font-size: 1.2rem !important; font-weight: 700 !important;
+            color: #2563EB !important; letter-spacing: -0.01em;
+        }
+        .st-key-topbar_brand button:hover { color: #1D4ED8 !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    with st.container(key="topbar_brand"):
+        if st.button("Samsung C&T", key="topbar_brand_btn"):
+            st.session_state["page"] = "dashboard"
+            st.rerun()
     _render_help_button()
     _render_notify_button()
     _render_avatar_menu()
@@ -597,11 +627,10 @@ _HELP_FAQ_BY_CAT: list[tuple[str, list[tuple[str, str]]]] = [
         ("데이터가 자동 저장되나요?",
          "모든 입력은 Supabase에 즉시 저장됩니다. 조치 사진은 Storage 버킷(action-photos)에 "
          "영구 보관되어 새로고침·재로그인 후에도 그대로 유지됩니다."),
-        ("용어 — 별지5·6·9가 뭔가요?",
+        ("용어 — 별지5·6이 뭔가요?",
          "소방 안전점검 법정 서식입니다.\n"
          "(1) **별지5** — 안전점검 결과 지적 내역서 (점검 결과·지적사항)\n"
          "(2) **별지6** — (지적사항) 통보서 (불량 발생 시 발급·조치)\n"
-         "(3) **별지9** — 소방시설 오동작 관리대장 (운영 중 오동작 기록)\n"
          "각 PDF는 📄 보고서에서 출력합니다."),
     ]),
     ("시설 관리", [
@@ -637,13 +666,12 @@ _HELP_FAQ_BY_CAT: list[tuple[str, list[tuple[str, str]]]] = [
          "(1) **🔍 안전점검 관리** → 회차 행 **[점검]** 클릭 → 회차 상세 모달.\n"
          "(2) 각 Task 행의 **[점검 시작 →]** 버튼 클릭 → **행 아래 인라인 입력 영역**이 펼쳐집니다 "
          "(모달 안 모달이 아닌, 같은 모달에서 인라인).\n"
-         "(3) 점검 종류 / 양호·불량·오동작 / 지적사항 / 즉시 조치 입력 → [점검 결과 제출].\n"
+         "(3) 점검 종류 / 양호·불량 / 지적사항 / 즉시 조치 입력 → [점검 결과 제출].\n"
          "(4) QR 진입: 대시보드 [📷 점검 (QR 스캔)] 또는 장비 부착 QR 스티커 카메라 스캔."),
         ("점검 결과는 어떻게 선택하나요? (v1.6)",
-         "**양호 / 불량 / 오동작** 3가지 중 1개 선택.\n"
+         "**양호 / 불량** 2가지 중 1개 선택.\n"
          "(1) **양호** — Deficiency 1행 (양호)로 별지5 기록\n"
          "(2) **불량** — 지적사항 + 통보서 자동 발급, 별지5/6 기록. 현장 즉시 조치 가능\n"
-         "(3) **오동작** — 시설 자체 오작동, **별지9** 기록. 조치는 [작업 조치 관리]에서 별도 시점에\n"
          "※ **불량 시 조치 사진 첨부 필수 (v1.6)** — 미첨부 시 저장 차단."),
         ("화기작업구간 점검은 어떻게 진행하나요? (v1.7)",
          "**6단계 흐름** (일일/수시):\n"
@@ -717,31 +745,14 @@ _HELP_FAQ_BY_CAT: list[tuple[str, list[tuple[str, str]]]] = [
          "나타납니다. 정정한 값은 별지5 row에 반영됩니다."),
     ]),
     ("작업 조치 관리", [
-        ("오동작은 어떻게 등록·조치하나요? (v1.5+)",
-         "(1) **등록 2가지 경로**:\n"
-         "  · 점검 중 발견: 점검 시작 인라인 입력에서 결과 = '오동작' 선택\n"
-         "  · 점검 외 발견: **🔍 안전점검 관리** 우상단 **[오동작 등록]** 버튼\n"
-         "(2) **조치**: **🛠️ 작업 조치 관리** 통합 리스트의 오동작 행 (조치 대기) → **[조치 입력 →]**"),
         ("불량 점검 결과의 후속 조치는 어떻게 하나요?",
          "(1) 점검 입력에서 '현장에서 즉시 조치 완료'를 체크하면 즉시 별지5에 조치 단계까지 기록.\n"
          "(2) 미조치는 **🛠️ 작업 조치 관리** 페이지의 **[조치 입력 →]** 버튼으로 별도 시점에 "
          "조치 결과(내용/사진/확인자)를 입력."),
-        ("직접 등록한 오동작에 점검 ID·작업 ID가 왜 생기나요? (v1.10)",
-         "[오동작 등록]으로 **직접 등록**하면, 추적을 위해 **'오동작 접수' 유형의 점검 회차와 "
-         "작업(Task)이 자동 발행**되어 오동작에 연결됩니다.\n"
-         "(1) 그래서 작업 조치 관리 목록에 점검 ID(INS-…)·작업 ID(TSK-…)가 실제 값으로 표시됩니다.\n"
-         "(2) 안전점검 관리 회차 목록엔 **'오동작 접수' 빨강 배지**로 정기 점검과 구분되어 나타납니다.\n"
-         "(3) 정기 점검이 아니므로 **점검 KPI·별지5 회차 목록에는 포함되지 않습니다.**"),
-        ("오동작 발생 위치는 어떻게 기록하나요? (v1.9)",
-         "[오동작 등록] 다이얼로그의 **위치 (선택)** 영역에서 도면의 위치(spot)나 장비를 클릭해 "
-         "발생 위치를 지정합니다(선택 사항 — 도면 밖·불명 시 비움).\n"
-         "선택한 분류(소방시설 구분)와 일치하는 장비는 파란색으로 강조됩니다.\n"
-         "작업 조치 관리 통합 목록에서 오동작 행은 지적사항 행과 **동일한 열 구조**"
-         "(장소=층/구역, 점검종류=소방시설 구분)로 정렬됩니다."),
     ]),
     ("보고서", [
         ("PDF는 어디서 출력하나요?",
-         "(1) **📄 보고서** → 별지5/6/9 전체 PDF.\n"
+         "(1) **📄 보고서** → 별지5/6 전체 PDF.\n"
          "(2) 안전점검 관리 회차 [점검] 모달 → **[별지5 PDF (N건)]** — 그 회차만의 회차 단위 지적내역서.\n"
          "(별지5 지적사항 컬럼 형식: '장비명 (양호)' 또는 '장비명 (지적사항)')."),
     ]),
@@ -1126,10 +1137,15 @@ TASK_STATUS_KO = {
 
 def photo_input(label: str, key: str,
                 accept_types: list[str] | None = None,
-                help_text: str | None = None):
-    """조치 사진용 사진 입력. 파일 업로드 / 카메라 촬영 두 탭으로 제공.
-    카메라 촬영본이 있으면 그것을, 없으면 업로드 파일을 반환.
-    반환 객체는 .getvalue()로 bytes를 얻을 수 있는 UploadedFile 호환."""
+                help_text: str | None = None,
+                max_files: int = 1):
+    """사진 입력. 파일 업로드 / 카메라 촬영 두 탭으로 제공.
+
+    max_files=1(기본, 기존과 동일한 동작): 카메라 촬영본이 있으면 그것을, 없으면
+    업로드 파일 1개를 반환(.getvalue()로 bytes를 얻을 수 있는 UploadedFile 호환, 없으면 None).
+
+    max_files>1(v1.9/260907): 파일 업로드 탭이 다중 선택을 지원하고, 카메라 촬영본도
+    합쳐 최대 max_files개까지 담은 리스트를 반환(초과분은 잘라내고 경고 표시)."""
     if accept_types is None:
         accept_types = ["jpg", "jpeg", "png"]
 
@@ -1147,6 +1163,7 @@ def photo_input(label: str, key: str,
             type=accept_types,
             key=f"{key}_file",
             label_visibility="collapsed",
+            accept_multiple_files=(max_files > 1),
         )
     with tab_cam:
         camera = st.camera_input(
@@ -1154,8 +1171,18 @@ def photo_input(label: str, key: str,
             key=f"{key}_camera",
             label_visibility="collapsed",
         )
-    # 카메라 촬영본 우선 (가장 최근 입력으로 가정)
-    return camera if camera is not None else uploaded
+
+    if max_files <= 1:
+        # 카메라 촬영본 우선 (가장 최근 입력으로 가정)
+        return camera if camera is not None else uploaded
+
+    files = list(uploaded) if uploaded else []
+    if camera is not None:
+        files.append(camera)
+    if len(files) > max_files:
+        st.warning(f"사진은 최대 {max_files}장까지만 사용됩니다 — 앞의 {max_files}장만 반영됩니다.")
+        files = files[:max_files]
+    return files
 
 
 def badge(text: str) -> str:

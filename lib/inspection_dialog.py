@@ -31,8 +31,6 @@ EQ_CATEGORIES = [
 
 # 등록 가능한 층 (구 명칭 — 일부 로직 호환용)
 EQ_FLOORS = ["B3", "B2", "B1", "P4", "L1", "L2", "2F", "4F", "5F", "6F", "SRV"]
-# 실제 도면 PNG(assets/floors)가 있는 8개 층 — 신규 위치 생성 좌표 픽업용
-SPOT_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
 
 
 INSPECTION_TYPES = [
@@ -144,9 +142,20 @@ def new_inspection_dialog() -> None:
     action_immediate = False
     action_note_now = ""
     action_photo_now = None
+    before_photo_now = None
     confirmer = inspector
+    is_container = data.INSPECTION_KIND_CONTAINER in types_selected
 
     if result == "불량":
+        before_photo_now = photo_input(
+            "조치 전 사진" + (" *" if is_container else " (선택)"),
+            key="dlg_before_photo",
+            help_text=(
+                "가설컨테이너 사무실 점검은 조치 전 사진이 필수입니다. "
+                if is_container else ""
+            ) + "최대 2장. 휴대폰·태블릿은 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+            max_files=2,
+        )
         issue = st.text_area("지적사항",
                              placeholder="예: 1-A계단 피난구 유도등 점등 불량",
                              key="dlg_issue")
@@ -185,6 +194,9 @@ def new_inspection_dialog() -> None:
         if result == "불량" and not issue.strip():
             st.error("불량인 경우 지적사항을 입력해 주세요.")
             return
+        if result == "불량" and is_container and not before_photo_now:
+            st.error("가설컨테이너 사무실 점검은 조치 전 사진 없이는 저장할 수 없습니다.")
+            return
 
         # 회차 연결 — 렌더 시 결정된 선택값 사용
         # (진행 중 점검 1건=자동 / 2건 이상=사용자가 위에서 선택 / 0건=None)
@@ -210,6 +222,15 @@ def new_inspection_dialog() -> None:
             ))
 
         new_def_id = data.next_deficiency_id()
+        _before_files = before_photo_now or []
+        before_photo_path = (
+            data._upload_action_photo(f"{new_def_id}-disc", _before_files[0].getvalue())
+            if len(_before_files) >= 1 else None
+        )
+        before_photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-disc2", _before_files[1].getvalue())
+            if len(_before_files) >= 2 else None
+        )
         add_deficiency(Deficiency(
             deficiency_id=new_def_id,
             inspection_date=inspect_date, inspector=inspector,
@@ -220,6 +241,8 @@ def new_inspection_dialog() -> None:
             confirmer=confirmer if (result == "양호" or action_immediate) else None,
             notice_no=new_no,
             task_id=matched_task_id,
+            photo_path=before_photo_path,
+            photo_path2=before_photo_path2,
         ))
 
         # 장비의 최근 점검일·건강 상태 갱신 (KPI 카드 즉시 반영)
@@ -241,13 +264,11 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
     반환: 선택된 항목 dict ({'type': 'equipment'|'empty_spot', 'data': ...}) 또는 None.
     """
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
         control_toggle, legend_html, plotly_config,
     )
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
     # 후보 장비 또는 spot 정의된 층 모음 (빈 spot도 추가 대상이므로 spot 층 포함)
@@ -286,11 +307,11 @@ def _add_task_map_picker(round_id: str, candidates, all_eq, already_locs):
             ("#64748B", "이미 포함 (선택 불가)"),
         ]), unsafe_allow_html=True)
 
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.warning(f"{floor} 도면 이미지가 없습니다.")
         return None
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -604,13 +625,11 @@ def _location_map_picker(key_prefix: str, highlight_category: str | None = None)
     반환: {"floor","zone","spot_id","label"} 또는 None(미선택).
     highlight_category와 category가 일치하는 장비를 파란색 강조."""
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
         control_toggle, legend_html, plotly_config, lock_overlay_css,
     )
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
     all_eq = data.load_equipment()
@@ -631,11 +650,11 @@ def _location_map_picker(key_prefix: str, highlight_category: str | None = None)
             ("#94A3B8", "그 외 장비 · ◇ 빈 위치"),
         ]), unsafe_allow_html=True)
 
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.warning(f"{floor} 도면 이미지가 없습니다.")
         return st.session_state.get(f"{key_prefix}_picked")
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -743,19 +762,17 @@ def _spot_preview_map(sel_spot) -> None:
     클릭·선택·세션상태 변경 없음(정적).
     """
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import plotly_config
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
 
     floor = sel_spot.floor
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.warning(f"{floor} 도면 이미지가 없습니다.")
         return
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     spots = data.load_spots(floor)
     floor_eq = [e for e in data.load_equipment() if e.floor == floor and e.spot_id]
@@ -1054,10 +1071,11 @@ def action_input_dialog(deficiency_id: str) -> None:
         placeholder="예: 적재물 이동 완료, 전구 교체, 안전핀 재장착 등",
         key=f"act_dlg_note_{deficiency_id}",
     )
-    photo = photo_input(
+    photos = photo_input(
         "조치 결과 사진",
         key=f"act_dlg_photo_{deficiency_id}",
-        help_text="휴대폰·태블릿에서는 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+        help_text="최대 2장. 휴대폰·태블릿에서는 카메라 촬영 탭으로 즉시 촬영 가능합니다.",
+        max_files=2,
     )
 
     if st.button(
@@ -1067,13 +1085,16 @@ def action_input_dialog(deficiency_id: str) -> None:
         if not action_note.strip():
             st.error("조치 내용을 입력해 주세요.")
             return
-        photo_bytes = photo.getvalue() if photo else None
+        _photos = photos or []
+        photo_bytes = _photos[0].getvalue() if len(_photos) >= 1 else None
+        photo_bytes2 = _photos[1].getvalue() if len(_photos) >= 2 else None
         data.record_deficiency_action(
             deficiency_id=deficiency_id,
             action_at=action_at,
             action_note=action_note.strip(),
             confirmer=confirmer.strip() or "김소장",
             photo=photo_bytes,
+            photo2=photo_bytes2,
         )
         st.session_state["just_recorded_action"] = deficiency_id
         st.rerun()
@@ -1196,7 +1217,6 @@ def task_inspect_inline(task_id: str) -> None:
         # 2) 도면 spot 선택 정정 — 실제 도면에서 마커 클릭
         else:  # 도면 spot 선택
             import base64
-            from pathlib import Path
             import plotly.graph_objects as go
             from lib.floor_widget import (
                 control_toggle, legend_html, lock_overlay_css, plotly_config,
@@ -1217,10 +1237,9 @@ def task_inspect_inline(task_id: str) -> None:
                     key=f"tsk_loc_spot_floor_{task_id}",
                 )
 
-                ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
                 FIG_W, FIG_H = 2978, 2105
-                img_path = ASSETS_DIR / f"{floor_pick}.png"
-                if not img_path.exists():
+                img_bytes = data.get_floor_image_bytes(floor_pick)
+                if img_bytes is None:
                     st.warning(f"{floor_pick} 도면 이미지가 없습니다.")
                 else:
                     cc, lc = st.columns([1.2, 5])
@@ -1235,7 +1254,7 @@ def task_inspect_inline(task_id: str) -> None:
                         ]), unsafe_allow_html=True)
 
                     uri = "data:image/png;base64," + base64.b64encode(
-                        img_path.read_bytes()).decode()
+                        img_bytes).decode()
                     fig = go.Figure()
                     fig.add_layout_image(dict(
                         source=uri, xref="x", yref="y",
@@ -1421,13 +1440,20 @@ def task_inspect_inline(task_id: str) -> None:
                 "사유 카탈로그·조치 사진을 첨부해 주세요."
             )
 
+    insp_photo = photo_input(
+        "점검사진 (선택)",
+        key=f"tsk_insp_photo_{task_id}",
+        help_text="점검 현장 사진(결과 무관, 최대 2장). 모바일은 카메라 촬영 탭 이용.",
+        max_files=2,
+    )
+
     st.markdown(
         "<b style='color:#334155; font-size:0.92rem; margin-top:0.5rem;'>"
         "점검 결과</b>",
         unsafe_allow_html=True,
     )
     result = st.radio(
-        "결과", ["양호", "불량", "오동작"], horizontal=True,
+        "결과", ["양호", "불량"], horizontal=True,
         label_visibility="collapsed", key=f"tsk_res_{task_id}",
     )
 
@@ -1436,55 +1462,6 @@ def task_inspect_inline(task_id: str) -> None:
     action_note_now = ""
     action_photo_now = None
     confirmer_value = inspector
-
-    # 오동작 입력 영역 (v1.5+)
-    mal_category = (eq.category if eq else "기타")
-    mal_detail = ""
-    mal_occurred = inspect_date
-    if result == "오동작":
-        st.caption(
-            "⚠ 시설 자체의 오작동을 별지9에 기록합니다. "
-            "조치는 [작업 조치 관리]에서 별도 시점에 입력하세요."
-        )
-        all_mal_cats = list(MAL_CATEGORIES_TEMP) + list(MAL_CATEGORIES_OTHER)
-        auto_mapped = (mal_category in all_mal_cats)
-
-        mc1, mc2 = st.columns([1, 1])
-        with mc1:
-            if auto_mapped:
-                # 장비 카테고리가 별지9 카테고리에 직접 매핑 — 텍스트만 표시
-                st.markdown(
-                    f"<div style='color:#475569; font-size:0.86rem;'>"
-                    f"<b style='color:#334155;'>시설구분 (별지9)</b><br>"
-                    f"<span style='font-size:0.95rem; color:#0F172A;'>"
-                    f"{mal_category}</span>"
-                    f"<span style='color:#94A3B8; font-size:0.78rem; "
-                    f"margin-left:0.3rem;'>(Task 장비 기준 자동)</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                # 별지9에 직접 매핑 없음 — 사용자 선택 필요
-                st.caption(
-                    f"장비({mal_category})가 별지9 카테고리에 직접 매핑되지 않습니다. "
-                    "분류를 선택해 주세요."
-                )
-                mal_category = st.selectbox(
-                    "시설구분 (별지9)",
-                    options=all_mal_cats,
-                    index=0,
-                    key=f"tsk_mal_cat_{task_id}",
-                )
-        with mc2:
-            mal_occurred = st.date_input(
-                "발생일자", value=inspect_date,
-                key=f"tsk_mal_date_{task_id}",
-            )
-        mal_detail = st.text_area(
-            "오동작 내용",
-            placeholder="예: 점등 불량, 충수 상태 불량, 오작동 등",
-            key=f"tsk_mal_detail_{task_id}",
-        )
 
     # v1.6: 점검 종류 매칭되는 불량 사유 카탈로그 (화기작업/가설컨테이너)
     # types_selected에서 카탈로그 보유 종류가 하나라도 있으면 그것의 사유 카탈로그를 사용
@@ -1529,7 +1506,8 @@ def task_inspect_inline(task_id: str) -> None:
         action_photo_now = photo_input(
             "조치 사진 *",
             key=f"tsk_act_photo_{task_id}",
-            help_text="불량 시 사진 첨부 필수. 모바일은 카메라 촬영 탭으로 즉시 촬영.",
+            help_text="불량 시 사진 첨부 필수(최대 2장). 모바일은 카메라 촬영 탭으로 즉시 촬영.",
+            max_files=2,
         )
 
         action_immediate = st.checkbox(
@@ -1560,36 +1538,6 @@ def task_inspect_inline(task_id: str) -> None:
         use_container_width=True,
         key=f"tsk_submit_{task_id}",
     ):
-        if result == "오동작":
-            if not mal_detail.strip():
-                st.error("오동작 내용을 입력해 주세요.")
-                return
-            # 오동작은 별지9에 등록, Deficiency 생성 X
-            from lib.data import next_malfunction_id, Malfunction, _db, _task_rows, _refresh_round_status
-            new_mid = next_malfunction_id()
-            data.add_malfunction(Malfunction(
-                malfunction_id=new_mid,
-                category=mal_category,  # type: ignore[arg-type]
-                occurred_on=mal_occurred,
-                detail=mal_detail.strip(),
-                action="",
-                confirmer=inspector,
-                task_id=t.task_id,
-                action_done=False,
-            ))
-            # Task → Completed + 회차 status 자동 재계산
-            _db().table("inspection_tasks").update(
-                {"status": "Completed"}
-            ).eq("task_id", t.task_id).execute()
-            _task_rows.clear()
-            if t.round_id:
-                _refresh_round_status(t.round_id)
-            st.session_state.pop("round_inline_start_for", None)
-            st.session_state["just_completed_task"] = t.task_id
-            st.session_state["just_submitted_malfunction"] = True
-            st.rerun()
-            return
-
         if not types_selected:
             st.error("점검 종류를 1개 이상 선택해 주세요.")
             return
@@ -1626,16 +1574,32 @@ def task_inspect_inline(task_id: str) -> None:
         if result == "불량":
             new_no = next_notice_no(inspect_date)
 
-        # 사진 업로드 — v1.6: 불량 시 항상, 양호 시 없음
-        photo_bytes = (
-            action_photo_now.getvalue()
-            if (action_photo_now and result == "불량")
-            else None
+        # 사진 업로드 — v1.6: 불량 시 항상, 양호 시 없음. v1.9(260907): 최대 2장.
+        _action_photos = (
+            (action_photo_now or []) if result == "불량" else []
         )
         new_def_id = data.next_deficiency_id()
-        photo_path = None
-        if photo_bytes:
-            photo_path = data._upload_action_photo(new_def_id, photo_bytes)
+        # v1.9(260907): 별도 suffix로 저장 — record_deficiency_action이 나중에
+        # 같은 bare deficiency_id로 조치 후 사진을 업로드(upsert)할 때 이 발견 시
+        # 사진 Storage object를 덮어쓰지 않도록 키 충돌을 원천 차단.
+        photo_path = (
+            data._upload_action_photo(f"{new_def_id}-disc", _action_photos[0].getvalue())
+            if len(_action_photos) >= 1 else None
+        )
+        photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-disc2", _action_photos[1].getvalue())
+            if len(_action_photos) >= 2 else None
+        )
+
+        _insp_photos = insp_photo or []
+        insp_photo_path = (
+            data._upload_action_photo(f"{new_def_id}-insp", _insp_photos[0].getvalue())
+            if len(_insp_photos) >= 1 else None
+        )
+        insp_photo_path2 = (
+            data._upload_action_photo(f"{new_def_id}-insp2", _insp_photos[1].getvalue())
+            if len(_insp_photos) >= 2 else None
+        )
 
         # issue 텍스트 — 사유 카탈로그가 있으면 사유 요약, 없으면 자유 입력
         if result == "불량" and matching_kind_for_codes:
@@ -1670,11 +1634,20 @@ def task_inspect_inline(task_id: str) -> None:
             action_done=action_immediate or result == "양호",
             action_at=inspect_date if (action_immediate or result == "양호") else None,
             action_note=action_note_now.strip() if action_immediate else "",
-            action_photo_path=photo_path,
+            # v1.9(260907): 발견 시 사진은 photo_path로 이동. 단, "현장에서 즉시 조치 완료"를
+            # 체크한 경우는 같은 사진이 조치 결과 사진이기도 하므로 action_photo_path에도 그대로
+            # 채워야 별지6(조치 결과 사진 컬럼)이 계속 사진을 보여준다. 즉시조치가 아니면 None으로
+            # 시작해, 나중에 [작업 조치 관리] record_deficiency_action이 조치 후 사진으로 채운다.
+            action_photo_path=(photo_path if action_immediate else None),
+            action_photo_path2=(photo_path2 if action_immediate else None),
             submitter=inspector,
             defect_codes=defect_codes_selected,  # v1.6
             defect_other=defect_other_text.strip(),  # v1.6
             checklist_items=checklist_items,  # v1.7
+            photo_path=photo_path,                    # 발견 시(조치 전) 사진
+            photo_path2=photo_path2,                   # 발견 시(조치 전) 사진 2번째
+            inspection_photo_path=insp_photo_path,     # 결과 무관 점검사진
+            inspection_photo_path2=insp_photo_path2,   # 결과 무관 점검사진 2번째
         ))
 
         # 장비 health_status 갱신 (있으면)
@@ -1852,19 +1825,17 @@ def _eq_new_spot_map(floor: str):
     빈 곳(격자) 클릭 시 (x_pct, y_pct) 반환, 아니면 None.
     기존 spot은 노란 점(참고), 현재 선택 좌표는 파란 별로 표시."""
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
     from lib.floor_widget import (
         control_toggle, plotly_config, lock_overlay_css, legend_html,
     )
 
-    ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
-    img_path = ASSETS_DIR / f"{floor}.png"
-    if not img_path.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         st.caption(f"({floor} 도면 이미지가 없어 아래 좌표를 직접 입력하세요)")
         return None
-    uri = "data:image/png;base64," + base64.b64encode(img_path.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -2035,7 +2006,10 @@ def equipment_dialog() -> None:
         # 신규 위치 즉석 생성 — 도면 클릭으로 좌표 픽업 + 등록과 동시에 spot 정식 생성
         nc1, nc2 = st.columns([1, 2])
         with nc1:
-            new_floor = st.selectbox("층", options=SPOT_FLOORS, key="eq_dlg_new_floor")
+            new_floor = st.selectbox(
+                "층", options=data.load_all_floors(),
+                format_func=data.floor_display_name, key="eq_dlg_new_floor",
+            )
         with nc2:
             new_room = st.text_input(
                 "위치 설명(방이름)",

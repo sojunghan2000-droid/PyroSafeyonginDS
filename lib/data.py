@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import streamlit as st
@@ -31,6 +32,140 @@ ResolutionStatus = Literal["완료", "불가"]
 MAL_ROUND_TYPE = "오동작 접수"  # 직접 등록 오동작에 발행하는 회차/Task 유형 (정기 점검과 구분)
 
 ACTION_PHOTO_BUCKET = "action-photos"
+FLOOR_PLAN_BUCKET = "floor-plans"
+
+# 기존 8개 층(PDF 도면 기준) + TEMP(가설동). 로컬 assets/floors/*.png로 제공되며
+# 이 리스트는 바뀌지 않는다 — 새로 추가되는 장소는 floors 테이블에 저장된다.
+CORE_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof", "TEMP"]
+_ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
+
+
+def floors_table_supported() -> bool:
+    """floors 테이블 마이그레이션이 반영됐는지 확인 (probe). 미반영이면 False —
+    호출부는 '장소 추가' UI를 비활성화해 앱이 크래시하지 않게 한다."""
+    try:
+        _db().table("floors").select("code").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def load_all_floors(include_temp: bool = True) -> list[str]:
+    """전체 장소 code 목록 — CORE_FLOORS + DB에 등록된 커스텀 장소(sort_order 순).
+    include_temp=False면 CORE_FLOORS 중 TEMP를 제외한다
+    (위치 마스터 화면이 기존에 TEMP를 안 보여주던 동작을 그대로 유지)."""
+    core = [f for f in CORE_FLOORS if include_temp or f != "TEMP"]
+    custom = [r["code"] for r in _floor_rows()]
+    return core + custom
+
+
+def floor_display_name(code: str) -> str:
+    """장소 code → 화면 표시명. CORE_FLOORS는 code 자체가 표시명이다."""
+    if code in CORE_FLOORS:
+        return code
+    for r in _floor_rows():
+        if r["code"] == code:
+            return r["display_name"]
+    return code
+
+
+def get_floor_image_bytes(code: str) -> bytes | None:
+    """장소 도면 PNG bytes. CORE_FLOORS는 로컬 assets/floors/,
+    커스텀 장소는 Storage(floor-plans 버킷)에서 가져온다. 실패 시 None."""
+    if code in CORE_FLOORS:
+        p = _ASSETS_FLOORS_DIR / f"{code}.png"
+        return p.read_bytes() if p.exists() else None
+    for r in _floor_rows():
+        if r["code"] == code:
+            try:
+                return _db().storage.from_(FLOOR_PLAN_BUCKET).download(r["image_path"])
+            except Exception:
+                return None
+    return None
+
+
+def render_floor_pdf_preview(pdf_bytes: bytes) -> bytes:
+    """PDF 1페이지를 PNG bytes로 렌더링 (미리보기용, 아무것도 저장하지 않음).
+    scripts/convert_floor_pdfs.py와 동일하게 DPI 180 사용."""
+    import fitz  # 이 함수를 쓸 때만 필요한 무거운 의존성이라 지연 import
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page = doc.load_page(0)
+        matrix = fitz.Matrix(180 / 72, 180 / 72)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        return pix.tobytes("png")
+    finally:
+        doc.close()
+
+
+def _floor_code_from_name(display_name: str, existing_codes: set[str]) -> str:
+    """표시명 → 장소 code. 영문/숫자만 추출, 대문자화, 최대 12자.
+    비어있으면 PLACE로 폴백. 기존 code와 충돌하면 숫자 접미사를 붙인다."""
+    import re
+
+    raw = re.sub(r"[^A-Za-z0-9]", "", display_name).upper()[:12] or "PLACE"
+    if raw not in existing_codes:
+        return raw
+    n = 2
+    while True:
+        suffix = str(n)
+        candidate = raw[: 12 - len(suffix)] + suffix
+        if candidate not in existing_codes:
+            return candidate
+        n += 1
+
+
+def preview_floor_code(display_name: str) -> str:
+    """장소 추가 확정 전, 자동 생성될 code를 미리 계산 (저장하지 않음)."""
+    existing = set(CORE_FLOORS) | {r["code"] for r in _floor_rows()}
+    return _floor_code_from_name(display_name.strip(), existing)
+
+
+def add_floor(display_name: str, pdf_bytes: bytes) -> str:
+    """PDF 1페이지를 PNG로 렌더링해 Storage(floor-plans 버킷)에 올리고
+    floors 테이블에 등록한다. 반환값은 새로 생성된 code.
+    Storage 업로드나 DB insert가 실패하면 예외를 그대로 올린다
+    (이미지만 올라가고 테이블엔 없는 반쪽 상태를 만들지 않기 위해,
+    업로드를 먼저 하고 insert가 실패하면 업로드분 정리는 하지 않는다 —
+    같은 code로 재시도하면 upsert로 덮어써지므로 안전하다)."""
+    name = display_name.strip()
+    if not name:
+        raise ValueError("표시명을 입력해 주세요.")
+
+    png_bytes = render_floor_pdf_preview(pdf_bytes)
+
+    existing = set(CORE_FLOORS) | {r["code"] for r in _floor_rows()}
+    code = _floor_code_from_name(name, existing)
+    image_path = f"{code}.png"
+
+    _db().storage.from_(FLOOR_PLAN_BUCKET).upload(
+        image_path, png_bytes,
+        {"content-type": "image/png", "upsert": "true"},
+    )
+
+    rows = _floor_rows()
+    max_order = max([r["sort_order"] for r in rows], default=len(CORE_FLOORS) - 1)
+    _db().table("floors").insert({
+        "code": code,
+        "display_name": name,
+        "image_path": image_path,
+        "sort_order": max_order + 1,
+    }).execute()
+    _floor_rows.clear()
+    return code
+
+
+def rename_floor(code: str, new_display_name: str) -> None:
+    """커스텀 장소의 표시명 수정. CORE_FLOORS 대상이면 에러."""
+    if code in CORE_FLOORS:
+        raise ValueError(f"{code}는 기본 층이라 이름을 바꿀 수 없습니다.")
+    name = new_display_name.strip()
+    if not name:
+        raise ValueError("표시명을 입력해 주세요.")
+    _db().table("floors").update({"display_name": name}).eq("code", code).execute()
+    _floor_rows.clear()
+
 
 # 캐시 TTL(초) — 다른 사용자의 변경이 이 시간 안에 화면에 반영된다.
 _CACHE_TTL = 15
@@ -55,6 +190,8 @@ class Equipment:
     inspection_types: list[str] = None  # type: ignore[assignment]
     # v1.1: 도면 위 위치 spot 객체 참조 (없으면 None — 기존 데이터)
     spot_id: str | None = None
+    # v1.9(260907): 소프트 삭제 — False면 목록에서 숨김(이력은 보존)
+    active: bool = True
 
     def __post_init__(self) -> None:
         if self.inspection_types is None:
@@ -78,28 +215,26 @@ class Spot:
 # 점검 회차 등록 시 사용하는 운영 주기 카탈로그 (v1.5+ / v1.6: 일일 점검 추가)
 # 시설 종류와는 직교 — 한 회차에 여러 시설이 포함될 수 있음.
 TASK_INSPECTION_TYPES = [
-    "일일 점검",   # v1.6: 화기작업구간 점검용 — 작업 시작 전/중 수시
-    "주간 점검",
+    "일일 점검",   # 화기작업구간 점검용 — 작업 시작 전/중 수시
     "월간 점검",
-    "분기 점검",
-    "연간 점검",
+    "특별 점검",   # v1.9(260907): 분기 점검 + 연간 점검 통합
 ]
 
 # 카테고리 → 기본 적용 점검 주기 (시드/신규 등록 시 자동 채움. 관리자가 수정 가능)
 INSPECTION_TYPE_CATEGORY_DEFAULTS: dict[str, list[str]] = {
-    "소화기": ["월간 점검", "분기 점검"],
-    "확산소화기": ["월간 점검", "분기 점검"],
+    "소화기": ["월간 점검", "특별 점검"],
+    "확산소화기": ["월간 점검", "특별 점검"],
     "간이소화장치": ["월간 점검"],
     "비상경보장치": ["월간 점검"],
     "가스누설경보기": ["월간 점검"],
     "간이피난유도선": ["월간 점검"],
     "방화포": ["월간 점검"],
-    "감지기": ["분기 점검"],
-    "발신기": ["분기 점검"],
-    "수신기": ["분기 점검"],
+    "감지기": ["특별 점검"],
+    "발신기": ["특별 점검"],
+    "수신기": ["특별 점검"],
     "유도등": ["월간 점검"],
-    "스프링클러": ["분기 점검"],
-    "소화전": ["분기 점검"],
+    "스프링클러": ["특별 점검"],
+    "소화전": ["특별 점검"],
     "기타": [],
 }
 
@@ -279,6 +414,14 @@ class Deficiency:
     defect_other: str = ""
     # v1.7: 세부 checklist 항목별 상태 — {"카테고리|항목" or "항목": "OK"|"NG"|"NA"}
     checklist_items: dict[str, str] = None  # type: ignore[assignment]
+    # v1.9(260907): 조치 전(발견 시) 사진 — action_photo_path(조치 후)와 분리
+    photo_path: str | None = None
+    # v1.9(260907): 점검 결과(양호/불량) 무관 점검사진
+    inspection_photo_path: str | None = None
+    # v1.9(260907): 각 사진 종류별 2번째 사진(선택, 최대 2장)
+    photo_path2: str | None = None
+    action_photo_path2: str | None = None
+    inspection_photo_path2: str | None = None
 
     def __post_init__(self) -> None:
         if self.defect_codes is None:
@@ -399,6 +542,7 @@ def _row_to_equipment(r: dict) -> Equipment:
         pixel_x=r.get("pixel_x") or 0.0, pixel_y=r.get("pixel_y") or 0.0,
         inspection_types=list(r.get("inspection_types") or []),
         spot_id=r.get("spot_id"),
+        active=bool(r.get("active", True)),
     )
 
 
@@ -456,6 +600,11 @@ def _row_to_deficiency(r: dict) -> Deficiency:
         defect_codes=list(r.get("defect_codes") or []),  # v1.6
         defect_other=r.get("defect_other") or "",        # v1.6
         checklist_items=dict(r.get("checklist_items") or {}),  # v1.7
+        photo_path=r.get("photo_path"),
+        inspection_photo_path=r.get("inspection_photo_path"),
+        photo_path2=r.get("photo_path2"),
+        action_photo_path2=r.get("action_photo_path2"),
+        inspection_photo_path2=r.get("inspection_photo_path2"),
     )
 
 
@@ -514,6 +663,16 @@ def _notice_rows() -> list[dict]:
 
 
 @st.cache_data(ttl=_CACHE_TTL)
+def _floor_rows() -> list[dict]:
+    """floors 테이블 전체 (sort_order 순). 마이그레이션 전이면 빈 리스트."""
+    try:
+        return (_db().table("floors").select("*")
+                .order("sort_order").execute().data)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=_CACHE_TTL)
 def _malfunction_rows() -> list[dict]:
     return (_db().table("malfunctions").select("*")
             .order("occurred_on", desc=True).execute().data)
@@ -550,8 +709,11 @@ def inspection_types_table_exists() -> bool:
         return False
 
 
-def load_equipment() -> list[Equipment]:
-    return [_row_to_equipment(r) for r in _equipment_rows()]
+def load_equipment(include_retired: bool = False) -> list[Equipment]:
+    eqs = [_row_to_equipment(r) for r in _equipment_rows()]
+    if not include_retired:
+        eqs = [e for e in eqs if e.active]
+    return eqs
 
 
 def load_tasks() -> list[InspectionTask]:
@@ -669,6 +831,37 @@ def add_equipment(e: Equipment) -> None:
         "inspection_types": e.inspection_types or [],
         "spot_id": e.spot_id,
     }).execute()
+    _equipment_rows.clear()
+
+
+def equipment_active_supported() -> bool:
+    """equipment.active 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("equipment").select("active").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def retire_equipment(equipment_id: str) -> None:
+    """장비를 비활성화(소프트 삭제)한다. 이력은 보존.
+    active 컬럼 미마이그레이션 시 아무 것도 하지 않는다."""
+    if not equipment_active_supported():
+        return
+    _db().table("equipment").update({"active": False}).eq(
+        "equipment_id", equipment_id
+    ).execute()
+    _equipment_rows.clear()
+
+
+def restore_equipment(equipment_id: str) -> None:
+    """비활성화된 장비를 복구한다.
+    active 컬럼 미마이그레이션 시 아무 것도 하지 않는다."""
+    if not equipment_active_supported():
+        return
+    _db().table("equipment").update({"active": True}).eq(
+        "equipment_id", equipment_id
+    ).execute()
     _equipment_rows.clear()
 
 
@@ -936,6 +1129,24 @@ def archive_round(round_id: str) -> bool:
     return True
 
 
+def _round_has_completed_task(round_id: str) -> bool:
+    return any(
+        t.status == "Completed"
+        for t in tasks_of_round(round_id, include_excluded=True)
+    )
+
+
+def delete_round(round_id: str, by: str) -> bool:
+    """완료된 Task가 하나도 없는 회차를 취소+숨김 한 번에 처리(원클릭 삭제).
+    완료 Task가 있으면 거부(False) — 그 경우는 기존 point-in-time 취소(사유 입력)만 허용."""
+    r = get_round(round_id)
+    if not r or r.cancelled or _round_has_completed_task(round_id):
+        return False
+    if not cancel_round(round_id, "생성 취소", by):
+        return False
+    return archive_round(round_id)
+
+
 def restore_round(round_id: str) -> bool:
     """숨긴 회차를 목록에 다시 표시(복구)."""
     r = get_round(round_id)
@@ -990,8 +1201,26 @@ def next_round_id() -> str:
     return f"{prefix}{next_n:03d}"
 
 
+def deficiency_photo_columns_supported() -> bool:
+    """deficiencies.photo_path 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("deficiencies").select("photo_path").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def deficiency_photo_columns2_supported() -> bool:
+    """deficiencies.photo_path2 등 2번째 사진 슬롯 컬럼(마이그레이션) 존재 여부."""
+    try:
+        _db().table("deficiencies").select("photo_path2").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
 def add_deficiency(d: Deficiency) -> None:
-    _db().table("deficiencies").insert({
+    payload = {
         "deficiency_id": d.deficiency_id,
         "inspection_date": _iso(d.inspection_date),
         "inspector": d.inspector, "floor": d.floor, "zone": d.zone,
@@ -1007,20 +1236,31 @@ def add_deficiency(d: Deficiency) -> None:
         "defect_codes": list(d.defect_codes or []),  # v1.6
         "defect_other": d.defect_other or "",        # v1.6
         "checklist_items": dict(d.checklist_items or {}),  # v1.7
-    }).execute()
+    }
+    if deficiency_photo_columns_supported():
+        payload["photo_path"] = d.photo_path
+        payload["inspection_photo_path"] = d.inspection_photo_path
+    if deficiency_photo_columns2_supported():
+        payload["photo_path2"] = d.photo_path2
+        payload["action_photo_path2"] = d.action_photo_path2
+        payload["inspection_photo_path2"] = d.inspection_photo_path2
+    _db().table("deficiencies").insert(payload).execute()
     _deficiency_rows.clear()
 
 
 def record_deficiency_action(
     deficiency_id: str, action_at: date, action_note: str,
-    confirmer: str, photo: bytes | None,
+    confirmer: str, photo: bytes | None, photo2: bytes | None = None,
 ) -> None:
     """별지5 지적사항에 조치 단계 기록 (구 별지6 통보서 조치 흡수).
-    사진은 action-photos 버킷에 업로드."""
+    사진은 action-photos 버킷에 업로드. photo2는 v1.9(260907) 2번째 조치 후 사진(선택)."""
     photo_path = None
     if photo:
         # 통보서 사진 키 컨벤션 재사용 (deficiency_id로 저장)
         photo_path = _upload_action_photo(deficiency_id, photo)
+    photo_path2 = None
+    if photo2:
+        photo_path2 = _upload_action_photo(f"{deficiency_id}-2", photo2)
     payload = {
         "action_done": True,
         "action_at": _iso(action_at),
@@ -1029,6 +1269,8 @@ def record_deficiency_action(
     }
     if photo_path:
         payload["action_photo_path"] = photo_path
+    if photo_path2 and deficiency_photo_columns2_supported():
+        payload["action_photo_path2"] = photo_path2
     _db().table("deficiencies").update(payload).eq(
         "deficiency_id", deficiency_id
     ).execute()
@@ -1141,20 +1383,20 @@ def _max_seq_in_ids(ids: list[str], prefix: str) -> int:
 
 def next_equipment_id() -> str:
     """다음 장비 ID (EQ-NNNN)."""
-    ids = [e.equipment_id for e in load_equipment()]
+    ids = [e.equipment_id for e in load_equipment(include_retired=True)]
     return f"EQ-{_max_seq_in_ids(ids, 'EQ-') + 1:04d}"
 
 
 def next_serial(prefix: str = "PYRO") -> str:
     """다음 시리얼 번호 (PYRO-NNNNN)."""
-    serials = [e.serial for e in load_equipment()]
+    serials = [e.serial for e in load_equipment(include_retired=True)]
     return f"{prefix}-{_max_seq_in_ids(serials, f'{prefix}-') + 1:05d}"
 
 
 def next_location_id(floor: str, zone: str) -> str:
     """같은 층/구역의 다음 순번 위치 ID. 예: B3-SEC4-W3"""
     base = f"{floor}-{zone}-"
-    existing = [e.location_id for e in load_equipment() if e.location_id.startswith(base)]
+    existing = [e.location_id for e in load_equipment(include_retired=True) if e.location_id.startswith(base)]
     # 위치 ID는 -W2, -01 등 다양한 패턴이라 단순히 카운트만
     return f"{base}W{len(existing) + 1}"
 
@@ -1189,8 +1431,8 @@ def next_notice_no(d: date) -> str:
 # ---------- 집계 (KPI) ----------
 
 def equipment_kpis() -> dict:
-    eq_rows = _equipment_rows()
-    eq = [_row_to_equipment(r) for r in eq_rows]
+    eq = load_equipment()
+    eq_rows = [r for r in _equipment_rows() if bool(r.get("active", True))]
     recent_threshold = TODAY - timedelta(days=2)
     month_start = TODAY.replace(day=1)
     new_this_month = 0

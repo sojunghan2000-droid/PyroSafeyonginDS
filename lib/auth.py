@@ -10,7 +10,9 @@ app_metadata는 service_role 키로만 수정 가능하므로 사용자가 스�
 """
 from __future__ import annotations
 
+import json
 import re
+from urllib.parse import unquote
 
 import streamlit as st
 from supabase import Client, create_client
@@ -18,6 +20,64 @@ from supabase import Client, create_client
 # 아이디 → 합성 이메일 도메인 (화면에 노출되지 않음)
 ID_DOMAIN = "pyrosafe.local"
 USERNAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,19}$")
+
+# v1.9(260907): 새로고침해도 로그인 유지 — 브라우저 세션 쿠키(탭 종료 시 만료)에
+# access/refresh 토큰을 담아두고, 앱 시작 시 session_state가 비어 있으면 이걸로 복구.
+SESSION_COOKIE_NAME = "pyrosafe_session"
+
+
+def _set_session_cookie(access_token: str, refresh_token: str) -> None:
+    """로그인 성공 시 세션 쿠키 심기. Streamlit엔 쿠키 쓰기 API가 없어 작은 JS로 처리.
+    max-age를 지정하지 않아 브라우저(탭) 종료 시 자동 만료되는 세션 쿠키가 된다."""
+    payload = json.dumps({"access_token": access_token, "refresh_token": refresh_token})
+    st.components.v1.html(
+        f"<script>document.cookie = {json.dumps(SESSION_COOKIE_NAME)} + '='"
+        f" + encodeURIComponent({json.dumps(payload)}) + '; path=/; SameSite=Lax';</script>",
+        height=0,
+    )
+
+
+def _clear_session_cookie() -> None:
+    st.components.v1.html(
+        f"<script>document.cookie = {json.dumps(SESSION_COOKIE_NAME)}"
+        " + '=; path=/; max-age=0; SameSite=Lax';</script>",
+        height=0,
+    )
+
+
+def try_restore_session() -> None:
+    """새로고침으로 session_state가 날아갔을 때 브라우저 세션 쿠키로 로그인 복구 시도.
+    쿠키가 없거나 토큰이 만료/무효면 조용히 넘어가고(로그인 화면 노출), 예외를 띄우지 않는다."""
+    if st.session_state.get("auth"):
+        return
+    raw = st.context.cookies.get(SESSION_COOKIE_NAME)
+    if not raw:
+        return
+    try:
+        tokens = json.loads(unquote(raw))
+        print("[PYROSAFE-DEBUG] try_restore_session: cookie decoded OK")
+        c = anon_client()
+        c.auth.set_session(tokens["access_token"], tokens["refresh_token"])
+        s = c.auth.get_session()
+        resp = c.auth.get_user()
+        print(f"[PYROSAFE-DEBUG] try_restore_session: s={bool(s)} resp={bool(resp)} "
+              f"user={bool(resp and resp.user)}")
+        if not s or not resp or not resp.user:
+            return
+        u = resp.user
+        meta = u.user_metadata or {}
+        st.session_state["auth"] = {
+            "user_id": u.id,
+            "username": meta.get("username") or u.email.split("@")[0],
+            "name": meta.get("name") or u.email.split("@")[0],
+            "role": (u.app_metadata or {}).get("role", "user"),
+            "access_token": s.access_token,
+            "refresh_token": s.refresh_token,
+        }
+        # 쿠키 갱신(토큰 회전 대응)은 sync_session_cookie()가 뒤이어 일괄 처리한다.
+        print("[PYROSAFE-DEBUG] try_restore_session: SUCCESS, auth restored")
+    except Exception as e:
+        print(f"[PYROSAFE-DEBUG] try_restore_session: EXCEPTION {type(e).__name__}: {e}")
 
 
 def username_to_email(username: str) -> str:
@@ -70,6 +130,10 @@ def sign_in(username: str, password: str) -> tuple[bool, str]:
         "access_token": res.session.access_token,
         "refresh_token": res.session.refresh_token,
     }
+    # 쿠키는 여기서 바로 심지 않는다 — 로그인 직후 호출부(login.py)가 곧바로 st.rerun()을
+    # 호출해서, 지금 그리려는 iframe 스크립트가 브라우저에서 실행될 틈도 없이 화면이
+    # 통째로 갈아치워질 수 있다(경쟁 상태). 대신 sync_session_cookie()가 로그인 이후
+    # "재실행이 뒤따르지 않는" 정상 렌더 시점(app.py)에 실제로 쿠키를 심는다.
     return True, ""
 
 
@@ -114,13 +178,43 @@ def current_user() -> dict | None:
     return st.session_state.get("auth")
 
 
+def sync_session_cookie() -> None:
+    """로그인된 상태의 매 렌더에서 세션 쿠키가 현재 토큰과 일치하는지 확인해 갱신.
+    로그인 콜백(sign_in) 직후엔 st.rerun()이 곧바로 뒤따라 쿠키 스크립트가 실행될 틈이
+    없을 수 있어, 대신 뒤따르는 재실행이 없는 정상 렌더 시점(app.py 최상단)에서 호출한다."""
+    u = current_user()
+    if not u:
+        return
+    token = u.get("access_token")
+    if st.session_state.get("_cookie_synced_token") == token:
+        return
+    _set_session_cookie(u["access_token"], u["refresh_token"])
+    st.session_state["_cookie_synced_token"] = token
+
+
+def flush_pending_cookie_clear() -> bool:
+    """sign_out()이 남긴 삭제 예약 플래그를 처리. 실제로 지웠으면 True.
+    app.py의 로그인 게이트에서, try_restore_session()보다 먼저 호출해야
+    방금 지운 쿠키를 그 자리에서 다시 복구해버리는 일이 없다."""
+    if st.session_state.pop("_pending_cookie_clear", False):
+        _clear_session_cookie()
+        return True
+    return False
+
+
 def is_admin() -> bool:
     u = current_user()
     return bool(u and u.get("role") == "admin")
 
 
 def sign_out() -> None:
+    """로그아웃. 쿠키 삭제는 여기서 바로 하지 않는다 — 호출부가 곧바로 st.rerun()을
+    호출해서 삭제 스크립트가 실행될 틈이 없으면, 다음 렌더의 try_restore_session()이
+    아직 안 지워진 쿠키로 로그인을 되살려버린다(로그인 때와 동일한 경쟁 상태).
+    대신 플래그만 남겨 app.py가 재실행이 뒤따르지 않는 시점에 실제로 지우게 한다."""
     st.session_state.pop("auth", None)
+    st.session_state.pop("_cookie_synced_token", None)
+    st.session_state["_pending_cookie_clear"] = True
 
 
 def user_client() -> Client:
@@ -137,6 +231,8 @@ def user_client() -> Client:
     if s:
         auth["access_token"] = s.access_token
         auth["refresh_token"] = s.refresh_token
+        # v1.9(260907): 토큰 회전 시 세션 쿠키도 최신 값으로 갱신.
+        _set_session_cookie(s.access_token, s.refresh_token)
     return c
 
 

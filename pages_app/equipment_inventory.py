@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from lib import auth, data
-from lib.inspection_dialog import EQ_FLOORS, SPOT_FLOORS, equipment_dialog
+from lib.inspection_dialog import EQ_FLOORS, equipment_dialog
 from lib.qr import make_qr, payload_for, qr_png_bytes, sticker_sheet_pdf
 from lib.ui import badge, fmt_date, page_header, render_kpi_row
 
@@ -22,15 +22,13 @@ def _equipment_floor_fig(floor: str, eq_list, height: int = 460):
     """시설 관리 층 도면 미리보기 (읽기 전용) — 장비를 건강상태 색 마커로 표시.
     height로 단일(460)/미니맵(180) 크기 구분."""
     import base64
-    from pathlib import Path
     import plotly.graph_objects as go
 
-    ASSETS = Path(__file__).resolve().parent.parent / "assets" / "floors"
     FIG_W, FIG_H = 2978, 2105
-    p = ASSETS / f"{floor}.png"
-    if not p.exists():
+    img_bytes = data.get_floor_image_bytes(floor)
+    if img_bytes is None:
         return None
-    uri = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+    uri = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
     fig = go.Figure()
     fig.add_layout_image(dict(
@@ -112,7 +110,13 @@ def _render_table_header() -> None:
     st.markdown(
         "<style>"
         # st.popover 자동 chevron(▾) 아이콘 숨김 — 라벨 "?"만 노출
-        ".st-key-eqhdr [data-testid='stPopoverButton'] svg{display:none!important;}"
+        # (Streamlit 내부 emotion 스타일과의 우선순위 충돌 방지를 위해 클래스/속성 셀렉터를
+        #  중복 기술해 specificity를 높이고, display 외 속성도 함께 덮어써 이중 방어)
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] svg,"
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] [data-testid='stIconMaterial'][data-testid='stIconMaterial'],"
+        ".st-key-eqhdr.st-key-eqhdr [data-testid='stPopoverButton'] div[aria-hidden='true'][aria-hidden='true']"
+        "{display:none!important;visibility:hidden!important;width:0!important;"
+        "height:0!important;overflow:hidden!important;opacity:0!important;}"
         # "?"를 작은 원형 도움말 배지로
         ".st-key-eqhdr [data-testid='stPopoverButton']{"
         "background:#F1F5F9!important;border:1px solid #E2E8F0!important;box-shadow:none!important;"
@@ -528,7 +532,7 @@ def render() -> None:
     # 전 층 도면을 필터 위에 배치 — 자리만 예약하고 rows 계산 후 채운다 (v1.8 스왑)
     _floor_preview_slot = st.container()
 
-    f1, f2, cat_col, _ = st.columns([0.9, 0.9, 1.7, 1.9])
+    f1, f2, cat_col, hide_col = st.columns([0.9, 0.9, 1.7, 1.9])
     with f1:
         floor_filter = st.selectbox(
             "Filter",
@@ -551,6 +555,12 @@ def render() -> None:
             label_visibility="collapsed",
             key="eq_cat_filter",
         )
+    with hide_col:
+        show_retired = st.checkbox(
+            "숨긴 장비 보기", value=False, key="eq_show_retired",
+        )
+        if show_retired:
+            eq = data.load_equipment(include_retired=True)
 
     cat_filter_map = {
         "소화기 · 소화대차": {"소화기", "확산소화기"},
@@ -601,8 +611,9 @@ def render() -> None:
                     unsafe_allow_html=True,
                 )
                 # 관리자(위치 마스터) 화면처럼 전 층을 건물 순서로 2행 4열 그리드
-                extra = [f for f in sorted({e.floor for e in eq}) if f not in SPOT_FLOORS]
-                eq_floors = SPOT_FLOORS + extra
+                all_floors = data.load_all_floors()
+                extra = [f for f in sorted({e.floor for e in eq}) if f not in all_floors]
+                eq_floors = all_floors + extra
                 n_cols = 4
                 for row_start in range(0, len(eq_floors), n_cols):
                     row_floors = eq_floors[row_start:row_start + n_cols]
@@ -612,7 +623,7 @@ def render() -> None:
                             fl_eq = [e for e in rows if e.floor == fl]
                             st.markdown(
                                 f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
-                                f"margin-bottom:0.1rem;'>{fl} "
+                                f"margin-bottom:0.1rem;'>{data.floor_display_name(fl)} "
                                 f"<span style='color:#94A3B8; font-weight:500;'>"
                                 f"({len(fl_eq)})</span></div>",
                                 unsafe_allow_html=True,
@@ -695,8 +706,30 @@ def render() -> None:
                          use_container_width=True):
                 open_status_for = e.equipment_id
         with cols[7]:
-            if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
-                _qr_dialog(e.equipment_id)
+            # [변경]/[삭제·복구]를 한 줄에 나란히 (세로로 2줄 쌓이지 않게)
+            b_chg, b_act = st.columns(2, gap="small")
+            with b_chg:
+                if st.button("변경", key=f"qr_btn_{e.equipment_id}", use_container_width=True):
+                    _qr_dialog(e.equipment_id)
+            with b_act:
+                if e.active:
+                    if st.button("삭제", key=f"eq_retire_{e.equipment_id}",
+                                 use_container_width=True):
+                        data.retire_equipment(e.equipment_id)
+                        st.success(f"{e.equipment_id} 삭제(숨김) 처리되었습니다.")
+                        st.rerun()
+                else:
+                    if st.button("복구", key=f"eq_restore_{e.equipment_id}",
+                                 use_container_width=True):
+                        data.restore_equipment(e.equipment_id)
+                        st.success(f"{e.equipment_id} 복구되었습니다.")
+                        st.rerun()
+            if not e.active:
+                st.markdown(
+                    "<div style='text-align:center; color:#94A3B8; "
+                    "font-size:0.75rem;'>숨김됨</div>",
+                    unsafe_allow_html=True,
+                )
 
     if open_status_for:
         _status_dialog(open_status_for)

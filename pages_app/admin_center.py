@@ -6,7 +6,6 @@ spot 객체 정의 UI. 향후 사용자 관리·시스템 설정 등의 탭을 �
 from __future__ import annotations
 
 import base64
-from pathlib import Path
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -16,20 +15,17 @@ from lib.data import Spot
 from lib.floor_widget import control_toggle, legend_html, plotly_config
 from lib.ui import badge, page_header
 
-# 새 8개 층 (대시보드 Location 탭과 동일 순서)
-ADMIN_FLOORS = ["PIT", "B2", "B1", "1F", "2F", "3F", "4F", "Roof"]
-ASSETS_FLOORS_DIR = Path(__file__).resolve().parent.parent / "assets" / "floors"
-
-# 도면 PNG 모두 동일 픽셀 크기 (convert_floor_pdfs.py 기준)
+# 도면 PNG 모두 동일 픽셀 크기로 취급 (convert_floor_pdfs.py 기준) — 신규 업로드
+# 장소는 원본 PDF 비율에 따라 다를 수 있지만, stretch 렌더링이라 좌표(%)는 그대로 맞는다.
 FIG_W = 2978
 FIG_H = 2105
 
 
 def _floor_image_uri(floor: str) -> str | None:
-    p = ASSETS_FLOORS_DIR / f"{floor}.png"
-    if not p.exists():
+    img = data.get_floor_image_bytes(floor)
+    if img is None:
         return None
-    return f"data:image/png;base64,{base64.b64encode(p.read_bytes()).decode('ascii')}"
+    return f"data:image/png;base64,{base64.b64encode(img).decode('ascii')}"
 
 
 def _make_floor_fig(floor: str, spots: list[Spot],
@@ -347,6 +343,63 @@ def _make_floor_fig_edit(cur_spot, other_spots, x_pct, y_pct) -> go.Figure | Non
     return fig
 
 
+@st.dialog("장소 추가", width="large")
+def _floor_add_dialog() -> None:
+    """PDF 도면 업로드 → 표시명 입력 → 확정 전 렌더링 미리보기 → 저장."""
+    st.markdown(
+        "<div style='color:#64748B; font-size:0.9rem; margin-bottom:0.5rem;'>"
+        "PDF 도면 1장을 업로드하면 1페이지를 이미지로 변환해 미리 보여줍니다. "
+        "확인 후 확정하면 다른 장소들처럼 층 선택 목록에 바로 나타납니다."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    pdf_file = st.file_uploader("PDF 도면 *", type=["pdf"], key="floor_add_pdf")
+    default_name = pdf_file.name.rsplit(".", 1)[0] if pdf_file is not None else ""
+    display_name = st.text_input(
+        "표시명 *",
+        value=st.session_state.get("floor_add_name", default_name),
+        key="floor_add_name",
+        placeholder="예: 별관 2층",
+    )
+
+    preview_png = None
+    if pdf_file is not None:
+        try:
+            preview_png = data.render_floor_pdf_preview(pdf_file.getvalue())
+        except Exception as e:
+            st.error(f"PDF를 읽지 못했습니다: {e}")
+        if preview_png is not None:
+            st.image(preview_png, caption="미리보기 (아직 저장되지 않음)",
+                     use_container_width=True)
+            preview_code = data.preview_floor_code(display_name.strip() or default_name)
+            st.caption(f"생성될 코드: `{preview_code}`")
+
+    bcol1, bcol2 = st.columns([1, 1])
+    with bcol1:
+        if st.button("취소", use_container_width=True, key="floor_add_cancel"):
+            for k in ("floor_add_pdf", "floor_add_name"):
+                st.session_state.pop(k, None)
+            st.rerun()
+    with bcol2:
+        submit_disabled = (
+            pdf_file is None
+            or not display_name.strip()
+            or (pdf_file is not None and preview_png is None)
+        )
+        if st.button("확정", type="primary", use_container_width=True,
+                     key="floor_add_submit", disabled=submit_disabled):
+            try:
+                code = data.add_floor(display_name.strip(), pdf_file.getvalue())
+            except Exception as e:
+                st.error(f"장소 추가에 실패했습니다: {e}")
+            else:
+                for k in ("floor_add_pdf", "floor_add_name"):
+                    st.session_state.pop(k, None)
+                st.session_state["admin_spot_just_added"] = f"장소 '{code}' 추가 완료."
+                st.rerun()
+
+
 @st.dialog("신규 위치 추가", width="large")
 def _spot_define_dialog() -> None:
     """도면 클릭으로 좌표 픽업 + 속성 입력 + 저장. 위치 마스터 페이지에서 진입."""
@@ -360,7 +413,8 @@ def _spot_define_dialog() -> None:
 
     floor = st.selectbox(
         "층 선택",
-        options=ADMIN_FLOORS,
+        options=data.load_all_floors(include_temp=False),
+        format_func=data.floor_display_name,
         key="admin_spot_dlg_floor",
     )
     spots = data.load_spots(floor)
@@ -518,14 +572,15 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
     st.markdown(legend_html([
         ("#F59E0B", "등록된 위치(spot)"),
     ]), unsafe_allow_html=True)
+    all_floors = data.load_all_floors(include_temp=False)
     all_spots = spots  # 이미 전체 로드됨
-    by_floor: dict[str, list[Spot]] = {f: [] for f in ADMIN_FLOORS}
+    by_floor: dict[str, list[Spot]] = {f: [] for f in all_floors}
     for s in all_spots:
         by_floor.setdefault(s.floor, []).append(s)
 
     n_cols = 4
-    for row_start in range(0, len(ADMIN_FLOORS), n_cols):
-        row_floors = ADMIN_FLOORS[row_start:row_start + n_cols]
+    for row_start in range(0, len(all_floors), n_cols):
+        row_floors = all_floors[row_start:row_start + n_cols]
         cols = st.columns(n_cols)
         for col, fl in zip(cols, row_floors):
             with col:
@@ -533,7 +588,7 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
                 mini = _make_floor_fig(fl, fspots, show_grid=False, height=150)
                 st.markdown(
                     f"<div style='font-weight:600; color:#0F172A; font-size:0.82rem; "
-                    f"margin-bottom:0.1rem;'>{fl} "
+                    f"margin-bottom:0.1rem;'>{data.floor_display_name(fl)} "
                     f"<span style='color:#94A3B8; font-weight:500;'>({len(fspots)})</span></div>",
                     unsafe_allow_html=True,
                 )
@@ -553,8 +608,8 @@ def _spot_master_floor_preview(floor: str, spots: list[Spot]) -> None:
 
 
 def _spot_master_tab() -> None:
-    # 상단 헤더 + [+ 신규 위치 추가] 버튼
-    head_l, head_r = st.columns([3, 1])
+    # 상단 헤더 + [+ 장소 추가] + [+ 신규 위치 추가] 버튼
+    head_l, head_r = st.columns([3, 1.6])
     with head_l:
         st.markdown(
             "<div style='color:#64748B; font-size:0.92rem;'>"
@@ -567,12 +622,22 @@ def _spot_master_tab() -> None:
             unsafe_allow_html=True,
         )
     with head_r:
-        if st.button("+ 신규 위치 등록", type="secondary",
-                     use_container_width=True, key="admin_spot_open_dlg"):
-            for k in ("admin_spot_room", "admin_spot_notes",
-                      "admin_spot_x_input", "admin_spot_y_input"):
-                st.session_state.pop(k, None)
-            _spot_define_dialog()
+        btn_place, btn_spot = st.columns(2)
+        with btn_place:
+            floors_ready = data.floors_table_supported()
+            if st.button("+ 장소 추가", type="secondary",
+                         use_container_width=True, key="admin_floor_open_dlg",
+                         disabled=not floors_ready):
+                _floor_add_dialog()
+            if not floors_ready:
+                st.caption("DB 마이그레이션 필요")
+        with btn_spot:
+            if st.button("+ 신규 위치 등록", type="secondary",
+                         use_container_width=True, key="admin_spot_open_dlg"):
+                for k in ("admin_spot_room", "admin_spot_notes",
+                          "admin_spot_x_input", "admin_spot_y_input"):
+                    st.session_state.pop(k, None)
+                _spot_define_dialog()
 
     just_added = st.session_state.pop("admin_spot_just_added", None)
     if just_added:
@@ -580,10 +645,29 @@ def _spot_master_tab() -> None:
 
     floor = st.selectbox(
         "층 선택",
-        options=["전체"] + list(ADMIN_FLOORS),
+        options=["전체"] + data.load_all_floors(include_temp=False),
+        format_func=data.floor_display_name,
         key="admin_spot_floor",
     )
     spots = data.load_spots() if floor == "전체" else data.load_spots(floor)
+
+    # 커스텀 장소(DB에 등록된 것)만 표시명 수정 가능 — CORE_FLOORS는 코드 자체가 표시명
+    if floor != "전체" and floor not in data.CORE_FLOORS:
+        with st.expander(f"'{data.floor_display_name(floor)}' 표시명 수정",
+                         expanded=False):
+            new_name = st.text_input(
+                "새 표시명",
+                value=data.floor_display_name(floor),
+                key=f"floor_rename_{floor}",
+            )
+            if st.button("저장", key=f"floor_rename_save_{floor}"):
+                try:
+                    data.rename_floor(floor, new_name)
+                except Exception as e:
+                    st.error(str(e))
+                else:
+                    st.success("표시명을 수정했습니다.")
+                    st.rerun()
 
     # --- 도면 미리보기 (읽기 전용, v1.7) ---
     _spot_master_floor_preview(floor, spots)
